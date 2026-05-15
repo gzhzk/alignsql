@@ -211,12 +211,38 @@ rm /root/autodl-tmp/download_spider.py
 
 ---
 
-## 九、待完成
+## 八、W&B 实验追踪配置
 
-- [ ] 配置 wandb 登录
-- [ ] 配置 SFT 训练 yaml
-- [ ] 启动第一轮 SFT 训练
-- [ ] 评估 SFT 模型
-- [ ] DPO 偏好对构建
-- [ ] DPO 训练
-- [ ] 对比实验与结果分析
+```bash
+pip install wandb
+wandb login
+```
+
+执行 `wandb login` 后终端显示授权 URL，在本地浏览器打开该链接，复制 API key 并粘贴回终端即可。
+
+登录成功标志：
+
+```
+Currently logged in as: <用户名> to https://api.wandb.ai
+```
+
+在 SFT/DPO 的 yaml 配置中添加 wandb 参数：
+
+```yaml
+report_to: wandb
+run_name: sft_lora32_lr2e4   # 可选，方便区分实验
+```
+
+---
+
+## 九、目前状态
+
+AutoDL 环境已就绪：
+
+| 项目 | 路径 | 状态 |
+|------|------|:----:|
+| 基座模型 | `/root/autodl-tmp/models/qwen3-8b/` | ✅ |
+| 训练数据集 | `/root/autodl-tmp/data/spider/` | ✅ |
+| LLaMA-Factory | `/root/LLaMA-Factory/` | ✅ |
+| W&B 登录 | `wandb login` 已完成 | ✅ |
+| SSH 隧道 | `ssh -L 7860:localhost:7860 -p <端口> root@<地址>` | ✅ |
