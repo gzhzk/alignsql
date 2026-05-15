@@ -15,31 +15,9 @@
 
 ---
 
-## 二、GitHub 仓库搭建
+## 二、GitHub 仓库
 
-```bash
-git init
-git branch -m main
-gh repo create gzhzk/alignsql --private --source=. --push
-# 后续改为 public
-```
-
-仓库结构：
-
-```
-AlignSQL/
-├── README.md             # 项目入口（简洁版）
-├── LICENSE               # MIT
-├── .gitignore
-├── config/
-│   ├── sft.yaml          # SFT 训练配置
-│   └── dpo.yaml          # DPO 训练配置
-├── scripts/              # 数据处理与评估脚本
-├── models/               # 训练输出（gitignored）
-├── experiments/          # 实验日志
-└── docs/
-    └── project_report.md # 完整技术方案
-```
+https://github.com/gzhzk/alignsql
 
 ---
 
@@ -156,7 +134,7 @@ http://localhost:7860
 | `huggingface-cli download` | ❌ 命令已废弃 | 被 `hf` 替代 |
 | `hf download` | ❌ 503/401 | 学术加速代理不稳定，Xet 认证失败 |
 | `HF_ENDPOINT=hf-mirror.com hf download` | ❌ 同样网络错误 | 代理环境未完全清理 |
-| **`modelscope download`（最终方案）** | ✅ 待执行 | 阿里源，AutoDL 内网满速 |
+| **`modelscope download`（最终方案）** | ✅ 成功 | 阿里源，AutoDL 内网满速 |
 
 最终采用 ModelScope：
 
