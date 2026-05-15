@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+
+# Model outputs
+models/*/
+*.safetensors
+*.bin
+
+# Data
+data/*/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# wandb (local run files, not the experiment records on cloud)
+wandb/
+
+# Environment
+.env
+*.env.local
