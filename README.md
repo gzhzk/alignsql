@@ -108,3 +108,10 @@ AlignSQL/
 ## License
 
 MIT
+
+## 致谢
+
+- [Qwen3](https://github.com/QwenLM/Qwen3) — 基座模型
+- [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) — 微调框架
+- [Spider](https://yale-lily.github.io/spider) — 数据集
+- [Weights & Biases](https://wandb.ai) — 实验追踪
