@@ -167,11 +167,52 @@ modelscope download Qwen/Qwen3-8B --local_dir /root/autodl-tmp/models/qwen3-8b
 
 模型约 16GB，AutoDL 内网下载预计 10-15 分钟。
 
+> **实际耗时：** 约 24 分钟（50GB 文件，含多语言冗余文件）
+
 ---
 
-## 七、待完成
+## 七、Spider 数据集下载
 
-- [ ] 下载 Spider 数据到 AutoDL（上传或重下）
+ModelScope 只提供了模型，数据集仍需从 HuggingFace 获取。
+
+在 AutoDL 上创建脚本下载：
+
+```bash
+cat > /root/autodl-tmp/download_spider.py << 'PYEOF'
+from datasets import load_dataset
+ds = load_dataset("xlangai/spider")
+ds.save_to_disk("/root/autodl-tmp/data/spider")
+print("OK")
+PYEOF
+
+python /root/autodl-tmp/download_spider.py
+```
+
+下载结果：
+
+| 文件 | 大小 |
+|------|------|
+| train | 7000 条 |
+| validation | 1034 条 |
+
+下载完成后删除临时脚本：
+
+```bash
+rm /root/autodl-tmp/download_spider.py
+```
+
+最终 `/root/autodl-tmp/` 结构：
+
+```
+/root/autodl-tmp/
+├── models/qwen3-8b/     ← 模型 (16GB)
+└── data/spider/         ← 数据集
+```
+
+---
+
+## 九、待完成
+
 - [ ] 配置 wandb 登录
 - [ ] 配置 SFT 训练 yaml
 - [ ] 启动第一轮 SFT 训练
