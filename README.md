@@ -6,47 +6,70 @@ AlignSQL 以 NL2SQL 为切入点，完整跑通大语言模型微调的 **SFT + 
 
 ## 整体流程
 
-```
-Spider 数据 → 数据预处理 → SFT 训练 → 候选 SQL 生成
-                                  ↓              ↓
-                             LLaMA-Factory  SQLite 执行验证
-                                  ↓              ↓
-                              SFT 模型        偏好对构建
-                                  ↓              ↓
-                               └────→ DPO 训练 ←─┘
+```mermaid
+flowchart TB
+    subgraph Phase1["Phase 1: Zero-shot Baseline"]
+        A1[Spider Dev] --> B1[evaluate.py]
+        B1 --> C1[Qwen3-8B]
+        C1 --> D1[生成 SQL]
+        D1 --> E1[SQLite 执行验证]
+        E1 --> F1[EX 准确率 ~55%]
+    end
+
+    subgraph Phase2["Phase 2: SFT 微调"]
+        A2[Spider Train] --> B2[prepare_sft.py]
+        B2 --> C2[Alpaca 格式数据]
+        C2 --> D2[LLaMA-Factory<br/>LoRA rank=32]
+        D2 --> E2[SFT Adapter]
+        E2 --> F2[EX 准确率 ~78%]
+    end
+
+    subgraph Phase3["Phase 3: DPO 偏好对齐"]
+        E2 --> G1[generate_candidates.py]
+        G1 --> G2[候选 SQL ×8]
+        G2 --> G3[SQLite 执行验证]
+        G3 --> G4[build_preferences.py]
+        G4 --> G5[DPO 偏好对]
+        G5 --> G6[LLaMA-Factory DPO]
+        G6 --> G7[最终模型]
+        G7 --> G8[EX 准确率 ~82%]
+    end
 ```
 
 ## 快速开始
 
-### 1. 数据准备
+### Phase 1: Zero-shot Baseline
 
 ```bash
-# 下载 Spider 数据集（HF 镜像）
-uv run python scripts/download_spider.py
+# 测试 Qwen3-8B 基座模型的零样本能力
+python scripts/evaluate.py \
+    --model_path /path/to/Qwen3-8B \
+    --spider_dir /path/to/spider \
+    --stage zeroshot
 ```
 
-数据处理脚本参考 `scripts/prepare_sft.py`，将 Spider 原始 JSON 转为 LLaMA-Factory 兼容的 Alpaca 格式。
-
-### 2. SFT 训练
+### Phase 2: SFT 训练
 
 ```bash
+# 数据预处理：Spider → Alpaca 格式
+python scripts/prepare_sft.py
+
+# 启动 SFT 训练
 llamafactory-cli train config/sft.yaml
 ```
 
 核心配置：Qwen3-8B + LoRA (rank=32) + 梯度累积 ×8，单卡 RTX 4090 上约 3-4 小时。
 
-### 3. DPO 偏好对齐
-
-先执行反馈构建偏好对：
+### Phase 3: DPO 偏好对齐
 
 ```bash
+# SFT 模型生成候选 SQL
 python scripts/generate_candidates.py
+
+# 执行反馈构建偏好对
 python scripts/build_preferences.py
-```
 
-再启动 DPO 训练：
-
-```bash
+# 启动 DPO 训练
 llamafactory-cli train config/dpo.yaml
 ```
 
@@ -72,27 +95,34 @@ DPO 的主要增益集中在 Hard / Extra Hard 级别的复杂 SQL 上。
 
 ```
 AlignSQL/
-├── config/                  # 训练配置文件
-│   ├── sft.yaml             # SFT 训练配置（LoRA、学习率、epoch）
-│   └── dpo.yaml             # DPO 训练配置（β、学习率）
-│
-├── scripts/                 # 数据处理与评估脚本
-│   ├── prepare_sft.py       # Spider → Alpaca 格式转换
-│   ├── generate_candidates.py  # SFT 模型生成候选 SQL
-│   ├── build_preferences.py    # 执行反馈构建 DPO 偏好对
-│   └── evaluate.py          # 执行准确率评估
-│
-├── models/                  # 训练输出目录（gitignore）
-│   ├── sft/                 # SFT LoRA adapter 权重
-│   └── dpo/                 # DPO LoRA adapter 权重
-│
-├── experiments/             # 实验日志与评估结果
-│   └── logs/
-│
-├── docs/                    # 详细方案文档
-│   └── project_report.md    # 完整技术方案文档
-│
-└── README.md                # 项目入口（本文）
+├── config/                     # 配置文件
+│   ├── sft.yaml               # SFT 训练配置
+│   └── dpo.yaml               # DPO 训练配置
+├── data/                      # 数据目录
+│   ├── spider/                # Spider 原始数据
+│   │   ├── train.json
+│   │   ├── dev.json
+│   │   ├── tables.json
+│   │   └── database/         # SQLite 数据库文件
+│   ├── sft/                   # SFT 训练数据（LLaMA-Factory 格式）
+│   └── dpo/                   # DPO 偏好数据
+├── scripts/                   # 脚本
+│   ├── prepare_sft.py        # Spider → Alpaca 格式
+│   ├── generate_candidates.py # SFT 模型生成候选 SQL
+│   ├── build_preferences.py  # 执行反馈构建偏好对
+│   ├── evaluate.py           # 统一评测脚本（--stage 区分）
+│   └── run.sh                # 一键全流程
+├── models/                    # 模型权重输出
+│   ├── sft/                  # SFT adapter 权重
+│   └── dpo/                  # DPO adapter 权重
+├── experiments/               # 实验结果
+│   ├── zeroshot/             # Zero-shot 结果
+│   │   └── results.json
+│   ├── sft/                  # SFT 结果
+│   │   └── results.json
+│   └── dpo/                  # DPO 结果
+│       └── results.json
+└── README.md
 ```
 
 ## 详细方案

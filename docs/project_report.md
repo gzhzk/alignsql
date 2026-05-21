@@ -32,34 +32,32 @@
 
 ### 2.1 整体架构
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         AlignSQL 全流程                              │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  Spider 原始数据 ──► 数据预处理 ──► SFT 训练 ──► 候选 SQL 生成      │
-│                          │                              │           │
-│                     Alpaca 格式                   Beam search × 8   │
-│                          │                              │           │
-│                          ▼                              ▼           │
-│                     LLaMA-Factory                  SQLite 执行验证   │
-│                     + LoRA (rank=32)                    │           │
-│                          │                              │           │
-│                          ▼                              ▼           │
-│                   ┌─────┴─────┐                    偏好对构建        │
-│                   │  SFT 模型  │                        │            │
-│                   └─────┬─────┘                        │            │
-│                         │                              ▼            │
-│                         │                    ┌──────────────────┐    │
-│                         └────────────────────►  DPO 训练         │    │
-│                                               (LLaMA-Factory)    │    │
-│                                                    │              │    │
-│                                                    ▼              │    │
-│                                             ┌──────────────┐      │    │
-│                                             │ 最终模型      │      │    │
-│                                             └──────────────┘      │    │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Phase1["Phase 1: Zero-shot Baseline"]
+        P1_1[Spider Dev] --> P1_2[evaluate.py]
+        P1_2 --> P1_3[Qwen3-8B 基座模型]
+        P1_3 --> P1_4[生成 SQL]
+        P1_4 --> P1_5[SQLite 执行验证]
+        P1_5 --> P1_6[EX 准确率 ~55%]
+    end
+
+    subgraph Phase2["Phase 2: SFT 微调"]
+        P2_1[Spider Train] --> P2_2[prepare_sft.py]
+        P2_2 --> P2_3[Alpaca 格式]
+        P2_3 --> P2_4[LLaMA-Factory<br/>LoRA rank=32]
+        P2_4 --> P2_5[SFT Adapter]
+    end
+
+    subgraph Phase3["Phase 3: DPO 偏好对齐"]
+        P2_5 --> P3_1[generate_candidates.py]
+        P3_1 --> P3_2[候选 SQL ×8]
+        P3_2 --> P3_3[SQLite 执行验证]
+        P3_3 --> P3_4[build_preferences.py]
+        P3_4 --> P3_5[DPO 偏好对]
+        P3_5 --> P3_6[LLaMA-Factory DPO]
+        P3_6 --> P3_7[最终模型]
+    end
 ```
 
 ### 2.2 关键设计决策
@@ -528,34 +526,73 @@ def evaluate(model, eval_loader, db_dir):
 | 组件 | 规格 |
 |------|------|
 | GPU | RTX 4090 (24GB) × 1 |
-| 框架 | PyTorch 2.2+ + CUDA 12+ |
+| 框架 | PyTorch 2.5.1 + CUDA 12.4 |
 | 微调 | LLaMA-Factory (最新版) |
 | 实验追踪 | Weights & Biases (wandb) |
-| 数据 | Python 3.10+ (pandas, sqlite3, jsonlines) |
+| 数据 | Python 3.12 (pandas, sqlite3, jsonlines) |
 
 ### 8.3 项目结构
 
 ```
 AlignSQL/
-├── config/
-│   ├── sft.yaml            # SFT 训练配置
-│   └── dpo.yaml            # DPO 训练配置
-├── data/
-│   ├── spider/             # Spider 原始数据
-│   ├── sft/                # 处理后的 SFT 数据
-│   └── dpo/                # 自动构建的 DPO 偏好数据
-├── scripts/
-│   ├── prepare_sft.py      # Spider → Alpaca 格式转换
-│   ├── generate_candidates.py  # SFT 模型生成候选 SQL
-│   ├── build_preferences.py    # 执行反馈构建偏好对
-│   ├── evaluate.py         # 执行准确率评估 + 分难度分析
-│   └── run.sh              # 一键全流程启动
-├── models/
-│   ├── sft/                # SFT 模型输出
-│   └── dpo/                # DPO 模型输出
-├── experiments/
-│   └── logs/               # 训练日志 + 评估结果
+├── config/                     # 配置文件
+│   ├── sft.yaml               # SFT 训练配置
+│   └── dpo.yaml               # DPO 训练配置
+├── data/                      # 数据目录
+│   ├── spider/                # Spider 原始数据
+│   │   ├── train.json
+│   │   ├── dev.json
+│   │   ├── tables.json
+│   │   └── database/          # SQLite 数据库文件
+│   ├── sft/                   # SFT 训练数据（LLaMA-Factory 格式）
+│   └── dpo/                   # DPO 偏好数据
+├── scripts/                   # 脚本
+│   ├── prepare_sft.py         # Spider → Alpaca 格式
+│   ├── generate_candidates.py # SFT 模型生成候选 SQL
+│   ├── build_preferences.py   # 执行反馈构建偏好对
+│   ├── evaluate.py            # 统一评测脚本（--stage 区分）
+│   └── run.sh                 # 一键全流程
+├── models/                    # 模型权重输出
+│   ├── sft/                   # SFT adapter 权重
+│   └── dpo/                   # DPO adapter 权重
+├── experiments/                # 实验结果
+│   ├── zeroshot/              # Zero-shot 结果
+│   │   └── results.json
+│   ├── sft/                  # SFT 结果
+│   │   └── results.json
+│   └── dpo/                  # DPO 结果
+│       └── results.json
 └── README.md
+```
+
+### 8.4 脚本对应关系
+
+| 脚本 | 输入 | 输出 |
+|------|------|------|
+| `prepare_sft.py` | `data/spider/` | `data/sft/` |
+| `generate_candidates.py` | `models/sft/` + `data/spider/` | SFT 模型的候选 SQL |
+| `build_preferences.py` | 候选 SQL + 执行结果 | `data/dpo/` 偏好对 |
+| `evaluate.py` | 模型 + `data/spider/` | `experiments/*/results.json` |
+
+### 8.5 三阶段对应
+
+```
+Phase 1: Zero-shot
+    evaluate.py --stage zeroshot
+    → experiments/zeroshot/results.json
+
+Phase 2: SFT
+    prepare_sft.py              # 数据预处理
+    llamafactory-cli train sft.yaml  # 训练
+    evaluate.py --stage sft
+    → experiments/sft/results.json
+
+Phase 3: DPO
+    generate_candidates.py      # 生成候选
+    build_preferences.py        # 构建偏好
+    llamafactory-cli train dpo.yaml  # 训练
+    evaluate.py --stage dpo
+    → experiments/dpo/results.json
 ```
 
 ---
