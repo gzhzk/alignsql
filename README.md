@@ -6,38 +6,7 @@ AlignSQL 以 NL2SQL 为切入点，完整跑通大语言模型微调的 **SFT + 
 
 ## 整体流程
 
-```mermaid
-flowchart TB
-    subgraph Phase1["Phase 1: Zero-shot Baseline"]
-        direction TB
-        A1[Spider Dev] --> B1[evaluate_vllm.py]
-        B1 --> C1[Qwen3-8B]
-        C1 --> D1[生成 SQL]
-        D1 --> E1[SQLite 执行验证]
-        E1 --> F1[EX 准确率 ~42%]
-    end
-
-    subgraph Phase2["Phase 2: SFT 微调"]
-        direction TB
-        A2[Spider Train] --> B2[prepare_sft.py]
-        B2 --> C2[Alpaca 格式数据]
-        C2 --> D2[LLaMA-Factory<br/>LoRA rank=32]
-        D2 --> E2[SFT Adapter]
-        E2 --> F2[EX 准确率 ~78%]
-    end
-
-    subgraph Phase3["Phase 3: DPO 偏好对齐"]
-        direction TB
-        E2 --> G1[generate_candidates.py]
-        G1 --> G2[候选 SQL ×8]
-        G2 --> G3[SQLite 执行验证]
-        G3 --> G4[build_preferences.py]
-        G4 --> G5[DPO 偏好对]
-        G5 --> G6[LLaMA-Factory DPO]
-        G6 --> G7[最终模型]
-        G7 --> G8[EX 准确率 ~82%]
-    end
-```
+> 待完善
 
 ## 快速开始
 
