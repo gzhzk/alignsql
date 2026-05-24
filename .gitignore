@@ -9,14 +9,6 @@ build/
 .venv/
 venv/
 
-# Model outputs
-models/*/
-*.safetensors
-*.bin
-
-# Data
-data/*/
-
 # Spider Database (downloaded separately, CC BY-SA 4.0)
 dataset/database/
 dataset/test_database/
