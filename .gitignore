@@ -17,6 +17,10 @@ models/*/
 # Data
 data/*/
 
+# Spider Database (downloaded separately, CC BY-SA 4.0)
+dataset/database/
+dataset/test_database/
+
 # IDE
 .vscode/
 .idea/

@@ -65,7 +65,7 @@ llamafactory-cli train config/dpo.yaml
 
 | 阶段 | Spider (EX) | 说明 |
 |------|:-----------:|------|
-| Zero-shot (baseline) | ~55% | Qwen3-8B 直接 prompt |
+| Zero-shot (baseline) | ~42% | Qwen3-8B 直接 prompt |
 | SFT 后 | ~78% | 标准 LoRA 微调 |
 | DPO 后 | ~82% | 执行反馈偏好对齐 |
 
@@ -86,14 +86,14 @@ AlignSQL/
 ├── config/                     # 配置文件
 │   ├── sft.yaml               # SFT 训练配置
 │   └── dpo.yaml               # DPO 训练配置
-├── data/                      # 数据目录
-│   ├── spider/                # Spider 原始数据
-│   │   ├── train.json
-│   │   ├── dev.json
-│   │   ├── tables.json
-│   │   └── database/         # SQLite 数据库文件
-│   ├── sft/                   # SFT 训练数据（LLaMA-Factory 格式）
-│   └── dpo/                   # DPO 偏好数据
+├── dataset/                   # 数据目录 (git 排除 database/)
+│   ├── train-*.parquet        # 训练数据（HuggingFace 格式）
+│   ├── validation-*.parquet   # 验证数据
+│   ├── train_spider.json      # 训练集（JSON 格式）
+│   ├── dev.json               # 开发集
+│   ├── tables.json            # Schema 定义
+│   ├── database/              # SQLite 数据库（需单独下载）
+│   └── test_database/         # 测试数据库（需单独下载）
 ├── scripts/                   # 脚本
 │   ├── prepare_sft.py        # Spider → Alpaca 格式
 │   ├── analyze_difficulty.py # 数据集难度分析
@@ -113,6 +113,18 @@ AlignSQL/
 │       └── results.json
 └── README.md
 ```
+
+## 数据集
+
+使用 [Spider](https://yale-lily.github.io/spider) 数据集（CC BY-SA 4.0）
+
+```bash
+# 下载完整数据集（含数据库）
+# 官方链接: https://drive.google.com/uc?id=1TqleXec_OykOYFREKKtschzY29dUcVAQ
+# 解压后放到 dataset/ 目录
+```
+
+> **注意**：`dataset/database/` 和 `dataset/test_database/` 不包含在 git 仓库中，需要单独下载。
 
 ## 详细方案
 
