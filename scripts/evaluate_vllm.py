@@ -1,20 +1,25 @@
 """
 Spider 数据集评测脚本 (vLLM 加速版)
+支持官方三种评测模式：exec / match / all
 """
 import argparse
 import json
 import os
 import re
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any, List, Dict, Tuple, Optional
 
 os.environ["VLLM_USE_V1"] = "0"
-os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "4"
 
 from tqdm import tqdm
 from vllm import LLM, SamplingParams
 
+sys.path.insert(0, str(Path(__file__).parent))
+from process_sql import get_schema, Schema, get_sql
+from evaluation import Evaluator
 
 SYSTEM_PROMPTS = {
     "zeroshot": """You are an expert SQLite SQL generator.
@@ -239,100 +244,296 @@ def load_model(model_path: str) -> Tuple[LLM, Any]:
     return llm, tokenizer
 
 
+def init_scores():
+    return {
+        "easy": {"count": 0, "exec": 0, "exact": 0, "partial": {}},
+        "medium": {"count": 0, "exec": 0, "exact": 0, "partial": {}},
+        "hard": {"count": 0, "exec": 0, "exact": 0, "partial": {}},
+        "extra": {"count": 0, "exec": 0, "exact": 0, "partial": {}},
+        "all": {"count": 0, "exec": 0, "exact": 0, "partial": {}},
+    }
+
+
+def print_scores(scores, etype):
+    levels = ['easy', 'medium', 'hard', 'extra', 'all']
+    partial_types = ['select', 'select(no AGG)', 'where', 'where(no OP)', 'group(no Having)',
+                     'group', 'order', 'and/or', 'IUEN', 'keywords']
+    
+    print("\n" + "=" * 80)
+    print("{:20} {:20} {:20} {:20} {:20} {:20}".format("", *levels))
+    
+    counts = [scores[level]['count'] for level in levels]
+    print("{:20} {:<20d} {:<20d} {:<20d} {:<20d} {:<20d}".format("count", *counts))
+    
+    if etype in ["all", "exec"]:
+        print('=' * 80)
+        print(' ' * 20 + 'EXECUTION ACCURACY')
+        print('=' * 80)
+        this_scores = [scores[level]['exec'] for level in levels]
+        print("{:20} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f}".format("execution", *this_scores))
+    
+    if etype in ["all", "match"]:
+        print('\n' + '=' * 80)
+        print(' ' * 18 + 'EXACT MATCHING ACCURACY')
+        print('=' * 80)
+        exact_scores = [scores[level]['exact'] for level in levels]
+        print("{:20} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f}".format("exact match", *exact_scores))
+        
+        print('\n' + '-' * 80)
+        print('-' * 18 + 'PARTIAL MATCHING ACCURACY')
+        print('-' * 80)
+        for type_ in partial_types:
+            this_scores = [scores[level]['partial'].get(type_, {}).get('acc', 0) for level in levels]
+            print("{:20} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f}".format(type_, *this_scores))
+        
+        print('\n' + '-' * 80)
+        print('-' * 18 + 'PARTIAL MATCHING RECALL')
+        print('-' * 80)
+        for type_ in partial_types:
+            this_scores = [scores[level]['partial'].get(type_, {}).get('rec', 0) for level in levels]
+            print("{:20} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f}".format(type_, *this_scores))
+        
+        print('\n' + '-' * 80)
+        print('-' * 18 + 'PARTIAL MATCHING F1')
+        print('-' * 80)
+        for type_ in partial_types:
+            this_scores = [scores[level]['partial'].get(type_, {}).get('f1', 0) for level in levels]
+            print("{:20} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f}".format(type_, *this_scores))
+
+
 def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = "zeroshot",
-            max_samples: int = -1, temperature: float = 0.1, max_new_tokens: int = 384) -> Tuple[List, float]:
+             max_samples: int = -1, temperature: float = 0.1, max_new_tokens: int = 384,
+             etype: str = "all") -> Tuple[List, Dict]:
     spider_path = Path(spider_dir)
+    tables_file = spider_path / "tables.json"
+    
     with open(spider_path / f"{split}.json", "r") as f:
         data = json.load(f)
+    
+    with open(tables_file, "r") as f:
+        tables_data = json.load(f)
+    
+    db_schemas = {db["db_id"]: db for db in tables_data}
+    db_schema_objs = {}
+    found_dbs = 0
+    for db_id in db_schemas:
+        db_path = spider_path / "database" / db_id / f"{db_id}.sqlite"
+        
+        if db_path.exists():
+            try:
+                schema = get_schema(str(db_path))
+                db_schema_objs[db_id] = Schema(schema)
+                found_dbs += 1
+            except Exception as e:
+                print(f"Warning: Failed to load schema for {db_id}: {e}")
+    
+    print(f"Found {found_dbs} databases out of {len(db_schemas)}")
+    if found_dbs == 0:
+        print("ERROR: No databases found! Check dataset/database/ directory")
     
     if max_samples > 0:
         data = data[:max_samples]
     
     llm, tokenizer = load_model(model_path)
     
-    schemas, questions, gold_sqls, db_paths = [], [], [], []
+    items = []
     for item in data:
         db_id = item["db_id"]
         db_path = spider_path / "database" / db_id / f"{db_id}.sqlite"
-        if not db_path.exists():
-            db_path = spider_path / "database" / f"{db_id}.sqlite"
         
-        try:
-            schemas.append(load_schema(spider_path, db_id))
-            questions.append(item["question"])
-            gold_sqls.append(item["query"])
-            db_paths.append(str(db_path))
-        except Exception as e:
-            print(f"Warning: {db_id} - {e}")
-            schemas.append(None)
+        if db_id not in db_schemas:
+            continue
+        
+        has_db = db_path.exists()
+        items.append({
+            "db_id": db_id,
+            "question": item["question"],
+            "gold_sql": item["query"],
+            "db_path": str(db_path) if has_db else "",
+            "schema": load_schema(spider_path, db_id),
+            "has_db": has_db,
+        })
     
-    valid_idx = [i for i, s in enumerate(schemas) if s is not None]
-    if len(valid_idx) == 0:
-        return [], 0.0
+    evaluator = Evaluator()
+    scores = init_scores()
+    results = []
+
+    print(f"Evaluating {len(items)} samples (etype={etype})...")
+    print(f"db_schema_objs loaded: {len(db_schema_objs)} databases")
     
-    print(f"Evaluating {len(valid_idx)} samples...")
-    prompts = [build_prompt(schemas[i], questions[i], stage) for i in valid_idx]
+    # 检查一个样本的解析情况
+    if items:
+        sample = items[0]
+        sample_db_id = sample["db_id"]
+        print(f"\nDebug - First sample:")
+        print(f"  db_id: {sample_db_id}")
+        print(f"  has_db: {sample.get('has_db', False)}")
+        print(f"  in db_schema_objs: {sample_db_id in db_schema_objs}")
+        print(f"  gold_sql: {sample['gold_sql']}")
+        if sample_db_id in db_schema_objs:
+            try:
+                test_parsed = get_sql(db_schema_objs[sample_db_id], sample['gold_sql'])
+                print(f"  gold_parsed success: {test_parsed is not None}")
+                print(f"  hardness: {evaluator.eval_hardness(test_parsed)}")
+            except Exception as e:
+                print(f"  gold_parsed FAILED: {e}")
+    
+    prompts = [build_prompt(item["schema"], item["question"], stage) for item in items]
     pred_sqls = batch_generate_sql(llm, tokenizer, prompts, max_new_tokens, temperature, stage)
     
-    correct = 0
-    results = []
-    pbar = tqdm(total=len(pred_sqls), desc="Evaluating")
+    pbar = tqdm(total=len(items), desc="Evaluating")
     
-    for i, pred_sql in enumerate(pred_sqls):
-        gold = gold_sqls[valid_idx[i]]
-        db = db_paths[valid_idx[i]]
-        question = questions[valid_idx[i]]
+    for idx, (item, pred_sql) in enumerate(zip(items, pred_sqls)):
+        gold_sql = item["gold_sql"]
+        db_path = item["db_path"]
+        db_id = item["db_id"]
+        has_db = item.get("has_db", False)
         
-        is_correct = False
-        if pred_sql:
-            _, pred_res = execute_sql(db, pred_sql)
-            _, gold_res = execute_sql(db, gold)
-            if isinstance(pred_res, list) and isinstance(gold_res, list):
-                is_correct = compare_results(pred_res, gold_res)
-        
-        if is_correct:
-            correct += 1
-        
-        results.append({
-            "index": valid_idx[i],
-            "db_id": data[valid_idx[i]]["db_id"],
-            "question": question,
-            "gold_sql": gold,
+        result = {
+            "index": idx,
+            "db_id": db_id,
+            "question": item["question"],
+            "gold_sql": gold_sql,
             "pred_sql": pred_sql if pred_sql else "FAILED",
-            "correct": is_correct,
-        })
+            "hardness": "unknown",
+            "exec_correct": False,
+            "exact_match": False,
+        }
         
-        pbar.set_postfix({"Acc": f"{100*correct/(i+1):.1f}%"})
+        pred_parsed = None
+        gold_parsed = None
+        
+        if pred_sql and db_id in db_schema_objs:
+            try:
+                pred_parsed = get_sql(db_schema_objs[db_id], pred_sql)
+            except Exception as e:
+                pass
+        
+        if db_id in db_schema_objs:
+            try:
+                gold_parsed = get_sql(db_schema_objs[db_id], gold_sql)
+            except Exception as e:
+                pass
+        
+        hardness = "unknown"
+        if gold_parsed is not None:
+            hardness = evaluator.eval_hardness(gold_parsed)
+            result["hardness"] = hardness
+            scores[hardness]["count"] += 1
+        
+        exec_correct = False
+        if pred_sql and gold_parsed is not None and has_db and db_path:
+            try:
+                _, pred_res = execute_sql(db_path, pred_sql)
+                _, gold_res = execute_sql(db_path, gold_sql)
+                if isinstance(pred_res, list) and isinstance(gold_res, list):
+                    exec_correct = compare_results(pred_res, gold_res)
+            except:
+                pass
+        
+        result["exec_correct"] = exec_correct
+        
+        exact_match = False
+        if pred_parsed is not None and gold_parsed is not None:
+            exact_match = evaluator.eval_exact_match(pred_parsed, gold_parsed) == 1
+            if exact_match:
+                partial_scores = evaluator.partial_scores
+                for ptype, pscore in partial_scores.items():
+                    if hardness != "unknown":
+                        if ptype not in scores[hardness]['partial']:
+                            scores[hardness]['partial'][ptype] = {'acc': 0, 'rec': 0, 'f1': 0}
+                        scores[hardness]['partial'][ptype]['acc'] += pscore['acc']
+                        scores[hardness]['partial'][ptype]['rec'] += pscore['rec']
+                        scores[hardness]['partial'][ptype]['f1'] += pscore['f1']
+        
+        result["exact_match"] = exact_match
+        
+        if hardness != "unknown":
+            if exec_correct:
+                scores[hardness]["exec"] += 1
+            if exact_match:
+                scores[hardness]["exact"] += 1
+        
+        results.append(result)
+        pbar.set_postfix({
+            "Exec": f"{sum(scores[h]['exec'] for h in ['easy','medium','hard','extra'])/max(1,sum(scores[h]['count'] for h in ['easy','medium','hard','extra']))*100:.1f}%",
+            "Exact": f"{sum(scores[h]['exact'] for h in ['easy','medium','hard','extra'])/max(1,sum(scores[h]['count'] for h in ['easy','medium','hard','extra']))*100:.1f}%"
+        })
         pbar.update(1)
     
     pbar.close()
-    acc = correct / len(pred_sqls) * 100
-    print(f"\nAccuracy: {correct}/{len(pred_sqls)} = {acc:.2f}%")
-    return results, acc
+    
+    for hardness in ['easy', 'medium', 'hard', 'extra']:
+        if scores[hardness]["count"] > 0:
+            total_count = scores[hardness]["count"]
+            scores[hardness]["exec"] /= total_count
+            scores[hardness]["exact"] /= total_count
+            for ptype in scores[hardness]['partial']:
+                scores[hardness]['partial'][ptype]['count'] = total_count
+    
+    total_count = sum(scores[h]["count"] for h in ['easy', 'medium', 'hard', 'extra'])
+    scores["all"]["count"] = total_count
+    all_partial_types = ['select', 'select(no AGG)', 'where', 'where(no OP)', 'group(no Having)',
+                        'group', 'order', 'and/or', 'IUEN', 'keywords']
+    if total_count > 0:
+        scores["all"]["exec"] = sum(scores[h]["exec"] * scores[h]["count"] for h in ['easy', 'medium', 'hard', 'extra']) / total_count
+        scores["all"]["exact"] = sum(scores[h]["exact"] * scores[h]["count"] for h in ['easy', 'medium', 'hard', 'extra']) / total_count
+        for ptype in all_partial_types:
+            all_acc = sum(scores[h]['partial'].get(ptype, {}).get('acc', 0) * scores[h]['count'] for h in ['easy', 'medium', 'hard', 'extra'])
+            all_rec = sum(scores[h]['partial'].get(ptype, {}).get('rec', 0) * scores[h]['count'] for h in ['easy', 'medium', 'hard', 'extra'])
+            all_f1 = sum(scores[h]['partial'].get(ptype, {}).get('f1', 0) * scores[h]['count'] for h in ['easy', 'medium', 'hard', 'extra'])
+            scores["all"]['partial'][ptype] = {
+                'acc': all_acc / total_count,
+                'rec': all_rec / total_count,
+                'f1': all_f1 / total_count,
+                'count': total_count
+            }
+    
+    print_scores(scores, etype)
+    
+    return results, scores
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--spider_dir", type=str, required=True)
+    parser = argparse.ArgumentParser(description="Spider Evaluation with vLLM")
+    parser.add_argument("--model_path", type=str, required=True, help="Path to model")
+    parser.add_argument("--spider_dir", type=str, required=True, help="Path to Spider dataset")
     parser.add_argument("--stage", type=str, default="zeroshot", choices=["zeroshot", "sft", "dpo"])
-    parser.add_argument("--split", type=str, default="dev")
-    parser.add_argument("--max_samples", type=int, default=-1)
+    parser.add_argument("--split", type=str, default="dev", choices=["dev", "train"])
+    parser.add_argument("--max_samples", type=int, default=-1, help="Max samples to evaluate, -1 for all")
     parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument("--max_new_tokens", type=int, default=384)
+    parser.add_argument("--etype", type=str, default="all", choices=["all", "exec", "match"], 
+                        help="Evaluation type: all, exec, match")
     parser.add_argument("--output_dir", type=str, default="experiments")
     args = parser.parse_args()
     
     output_dir = Path(args.output_dir) / args.stage
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    results, accuracy = evaluate(args.model_path, args.spider_dir, args.split, args.stage,
-                                  args.max_samples, args.temperature, args.max_new_tokens)
+    results, scores = evaluate(
+        args.model_path, args.spider_dir, args.split, args.stage,
+        args.max_samples, args.temperature, args.max_new_tokens, args.etype
+    )
+    
+    output_data = {
+        "etype": args.etype,
+        "stage": args.stage,
+        "split": args.split,
+        "scores": {
+            level: {
+                "count": int(scores[level]["count"]),
+                "exec": float(scores[level]["exec"]),
+                "exact": float(scores[level]["exact"]),
+            } for level in ['easy', 'medium', 'hard', 'extra', 'all']
+        },
+        "results": results,
+    }
     
     with open(output_dir / "results.json", "w") as f:
-        json.dump({"accuracy": accuracy, "stage": args.stage, "results": results}, f, ensure_ascii=False, indent=2)
+        json.dump(output_data, f, ensure_ascii=False, indent=2)
     
-    print(f"Results saved to {output_dir / 'results.json'}")
+    print(f"\nResults saved to {output_dir / 'results.json'}")
 
 
 if __name__ == "__main__":

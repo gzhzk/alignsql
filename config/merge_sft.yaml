@@ -1,0 +1,8 @@
+### model
+model_name_or_path: /root/autodl-tmp/models/qwen3-8b
+adapter_name_or_path: /root/alignsql/models/sft/adapter
+
+### export
+export_dir: /root/autodl-tmp/models/sft/merged
+export_size: 2
+export_legacy_format: false

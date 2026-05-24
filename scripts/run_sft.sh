@@ -1,12 +1,12 @@
 #!/bin/bash
-# Zero-shot 基座模型评测脚本
+# SFT 训练后模型评测脚本
 
 cd /root/alignsql
 
 python scripts/evaluate_vllm.py \
-    --model_path /root/autodl-tmp/models/qwen3-8b \
+    --model_path /root/autodl-tmp/models/sft/merged \
     --spider_dir /root/alignsql/dataset \
-    --stage zeroshot \
+    --stage sft \
     --split dev \
     --max_samples -1 \
     --temperature 0 \

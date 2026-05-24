@@ -1,6 +1,6 @@
 {
   "spider_sft": {
-    "file_name": "data/sft_data.json",
+    "file_name": "sft_data.json",
     "formatting": "alpaca",
     "columns": {
       "prompt": "instruction",
