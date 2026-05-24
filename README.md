@@ -134,6 +134,7 @@ AlignSQL/
 
 - [Qwen3](https://github.com/QwenLM/Qwen3) — 基座模型
 - [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) — 微调框架
+- [vLLM](https://github.com/vllm-project/vllm) — 推理加速
 - [Spider](https://yale-lily.github.io/spider) — 数据集（CC BY-SA 4.0）
 - [Weights & Biases](https://wandb.ai) — 实验追踪
 - [DB-GPT-Hub](https://github.com/eosphoros-ai/DB-GPT-Hub) — 方案参考
