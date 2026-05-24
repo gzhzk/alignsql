@@ -1,148 +1,173 @@
-# Spider 评测系统文档
+# Spider 评测系统
 
 ## 概述
 
-本目录包含 Spider 数据集 SQL 生成能力的评估脚本，支持 zero-shot / SFT / DPO 各阶段模型的效果评测。
+基于官方 Spider 评测逻辑，支持三种评测模式：执行精度（exec）、精确匹配（match）、全部（all）。
 
-## 目录结构
+## 使用方法
 
-```
-scripts/
-├── evaluate_vllm.py       # vLLM 加速版（推荐，用于正式评测）
-├── evaluate_transformer.py # Transformers 版本（调试用）
-└── run_zeroshot.sh        # 快速运行脚本
-```
+### 命令行参数
 
-## 脚本说明
-
-### 1. evaluate_vllm.py（推荐）
-
-使用 vLLM 进行批量推理，速度快（~1000 samples/s）。
-
-**优势**：
-- 批量推理，GPU 利用率高
-- PagedAttention 显存管理
-- 前缀缓存加速
-
-**使用方法**：
 ```bash
 python scripts/evaluate_vllm.py \
-    --model_path /path/to/model \
-    --spider_dir /path/to/spider \
-    --stage zeroshot \
-    --split dev \
-    --max_samples 200 \
-    --temperature 0.1 \
-    --max_new_tokens 384
+    --model_path <模型路径> \
+    --spider_dir <数据集路径> \
+    --stage <zeroshot|sft|dpo> \
+    --split <dev|train> \
+    --etype <all|exec|match> \
+    --max_new_tokens 512 \
+    --temperature 0 \
+    --max_samples -1 \
+    --output_dir experiments
 ```
 
-### 2. evaluate_transformer.py
+### 参数说明
 
-使用 HuggingFace Transformers，适合调试或 vLLM 不可用时。
-
-```bash
-python scripts/evaluate_transformer.py \
-    --model_path /path/to/model \
-    --spider_dir /path/to/spider \
-    --stage sft \
-    --batch_size 8
-```
-
-## 参数说明
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--model_path` | 模型路径 | 必填 |
-| `--spider_dir` | Spider 数据集路径 | 必填 |
-| `--stage` | 实验阶段 | `zeroshot` |
-| `--split` | 数据集划分 | `dev` |
-| `--max_samples` | 最大样本数 (-1 全部) | -1 |
-| `--temperature` | 采样温度 | 0.1 |
-| `--max_new_tokens` | 最大生成长度 | 384 |
-| `--output_dir` | 结果输出目录 | `experiments` |
-
-## 输出格式
-
-结果保存到 `experiments/{stage}/results.json`：
-
-```json
-{
-  "accuracy": 41.8,
-  "stage": "zeroshot",
-  "results": [
-    {
-      "index": 0,
-      "db_id": "concert_singer",
-      "question": "How many singers do we have?",
-      "gold_sql": "SELECT count(*) FROM singer",
-      "pred_sql": "SELECT COUNT(*) FROM singer;",
-      "correct": true
-    },
-    ...
-  ]
-}
-```
-
-## 评测结果基准
-
-| 模型 | 准确率 | 说明 |
+| 参数 | 默认值 | 说明 |
 |------|--------|------|
-| Qwen3-8B (zero-shot) | 41.8% | Baseline |
-| Qwen3-8B (SFT) | TBD | 待训练后评测 |
-| Qwen3-8B (DPO) | TBD | 待训练后评测 |
+| `--model_path` | 必填 | 模型路径 |
+| `--spider_dir` | 必填 | Spider 数据集路径 |
+| `--stage` | zeroshot | 评测阶段 |
+| `--split` | dev | 评测数据集划分 |
+| `--etype` | all | 评测类型 |
+| `--max_new_tokens` | 384 | 最大生成 token 数 |
+| `--temperature` | 0.1 | 生成温度 |
+| `--max_samples` | -1 | 最大样本数，-1 为全部 |
+| `--output_dir` | experiments | 输出目录 |
 
-## 工作流程
+### 评测模式
 
-1. **Zero-shot 基准测试**
-   ```bash
-   python scripts/evaluate_vllm.py \
-       --model_path /path/to/qwen3-8b \
-       --spider_dir /path/to/spider \
-       --stage zeroshot
-   ```
+| 模式 | 说明 |
+|------|------|
+| `--etype all` | 同时报告 exec 和 match |
+| `--etype exec` | 仅执行精度 |
+| `--etype match` | 仅精确匹配 |
 
-2. **SFT 模型评测**
-   ```bash
-   python scripts/evaluate_vllm.py \
-       --model_path /path/to/sft-model \
-       --spider_dir /path/to/spider \
-       --stage sft
-   ```
+## 官方评测逻辑
 
-3. **DPO 模型评测**
-   ```bash
-   python scripts/evaluate_vllm.py \
-       --model_path /path/to/dpo-model \
-       --spider_dir /path/to/spider \
-       --stage dpo
-   ```
+### 1. 执行精度（Execution Accuracy）
 
-## 核心模块
+将预测 SQL 和标准 SQL 都在真实数据库上执行，比较结果是否一致。
 
-### load_schema
-从 Spider `tables.json` 加载数据库 schema，生成易读文本格式。
+```python
+execute_sql(db, pred_sql) == execute_sql(db, gold_sql)
+```
 
-### extract_sql
-从模型输出中提取纯 SQL 语句，支持多行 SQL 和代码块处理。
+### 2. 精确匹配（Exact Match）
 
-### compare_results
-比较预测结果与标准结果，支持浮点数容差和行顺序不敏感比较。
+将 SQL 解析成语义结构，比较 10 个组件：
 
-### batch_generate_sql
-vLLM 批量生成 SQL，充分利用 GPU 并行能力。
+| 组件 | 评测内容 |
+|------|----------|
+| select | SELECT 列名、聚合函数、distinct |
+| select(no AGG) | SELECT 不含聚合的部分 |
+| where | WHERE 条件 |
+| where(no OP) | WHERE 不含操作符的部分 |
+| group(no Having) | GROUP BY 不含 HAVING |
+| group | 完整的 GROUP BY + HAVING |
+| order | ORDER BY 和 LIMIT |
+| and/or | AND/OR 连接词 |
+| IUEN | INTERSECT/UNION/EXCEPT |
+| keywords | WHERE/GROUP/ORDER 等关键词 |
 
-## 注意事项
+所有组件 F1 都为 1 才算精确匹配成功。
 
-1. **Schema 格式**: 简化格式包含表名、列名、类型、主键和外键关系
-2. **SQL 提取**: 使用最后一个分号作为 SQL 结束标志
-3. **结果比较**: 排序后比较，忽略行顺序
-4. **错误处理**: schema 加载失败会跳过该样本
+### 3. 难度分级
 
-## 相关文档
+按 SQL 复杂度分 4 级：
 
-- [Zero-shot 方案](zeroshot.md) - 零样本 SQL 生成技术细节
-- [项目报告](project_report.md) - 整体项目介绍
+- **easy**: component1 ≤ 1, others = 0, component2 = 0
+- **medium**: (others ≤ 2, comp1 ≤ 1, comp2 = 0) 或 (comp1 ≤ 2, others < 2)
+- **hard**: (others > 2, comp1 ≤ 2) 或 (2 < comp1 ≤ 3, others ≤ 2)
+- **extra**: 其他情况
 
-## 更新日志
+其中：
+- component1: where、group、order、limit、join、or、like
+- component2: union、except、intersect
 
-- 2026-05-21: 初始版本，vLLM 批量推理优化
+## 输出示例
+
+```
+================================================================================
+                    easy              medium             hard              extra             all
+count               500               300                200               34                1034
+================================================================================
+                    EXECUTION ACCURACY
+================================================================================
+execution          0.850             0.720              0.550             0.350             0.720
+
+================================================================================
+                    EXACT MATCHING ACCURACY
+================================================================================
+exact match        0.820             0.680              0.500             0.300             0.680
+
+--------------------------------------------------------------------------------
+                  PARTIAL MATCHING ACCURACY
+--------------------------------------------------------------------------------
+select             0.900             0.850              0.750             0.600             0.820
+where              0.880             0.800              0.650             0.450             0.760
+group              0.920             0.850              0.700             0.500             0.810
+...
+```
+
+## 文件结构
+
+```
+alignsql/
+├── scripts/
+│   ├── evaluate_vllm.py      # 主评测脚本
+│   ├── process_sql.py         # 官方 SQL 解析
+│   ├── evaluation.py          # 官方评测逻辑
+│   ├── run_zeroshot.sh        # zeroshot 运行脚本
+│   └── run_sft.sh             # sft 运行脚本
+├── dataset/                   # Spider 数据集
+│   ├── dev.json
+│   ├── train.json
+│   ├── tables.json
+│   └── database/              # SQLite 数据库
+└── experiments/              # 评测结果
+    ├── zeroshot/
+    │   └── results.json
+    └── sft/
+        └── results.json
+```
+
+## 实验结果汇总
+
+### Qwen3-8B 模型对比
+
+| 模型 | Execution | Exact Match | 说明 |
+|------|-----------|-------------|------|
+| **Zero-shot** | 43.91% | 35.69% | 基座模型无微调 |
+| **SFT** | 71.86% | 63.93% | LoRA 微调后 |
+
+### 按难度分级对比
+
+| 难度 | 样本数 | Zero-shot EX | SFT EX | 提升 |
+|------|--------|--------------|--------|------|
+| easy | 248 | 72.18% | 87.90% | +15.72% |
+| medium | 446 | 45.96% | 72.87% | +26.91% |
+| hard | 174 | 25.86% | 67.82% | +41.96% |
+| extra | 166 | 15.06% | 49.40% | +34.34% |
+| **all** | **1034** | **43.91%** | **71.86%** | **+27.95%** |
+
+### 实验结论
+
+1. **SFT 微调效果显著**：整体提升 27.95%，从 43.91% 提升到 71.86%
+2. **难度越高提升越大**：hard 级别提升 41.96%，extra 级别提升 34.34%
+3. **exec vs exact 差约 8%**：说明模型部分 SQL 语义正确但结构与标准答案有差异
+
+### 结果文件位置
+
+| 实验 | 结果文件 |
+|------|----------|
+| Zero-shot | `experiments/zeroshot/results.json` |
+| SFT | `experiments/sft/results.json` |
+| DPO | `experiments/dpo/results.json` |
+
+## 依赖
+
+- vLLM（批量推理加速）
+- nltk（SQL tokenize）
+- tqdm（进度条）
+- sqlite3（内置）

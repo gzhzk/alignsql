@@ -1,4 +1,4 @@
-# AlignSQL SFT 训练流程
+# AlignSQL SFT 训练流程及评测方案
 
 > 基于 Spider 数据集的 NL2SQL 微调完整流程
 
@@ -9,7 +9,7 @@ AlignSQL 使用 LLaMA-Factory 对 Qwen3-8B 进行 SFT 训练，实现 Text-to-SQ
 ```
 Qwen3-8B (基座)
     ↓ SFT
-AlignSQL (微调模型) → EX 准确率 ~78%
+AlignSQL (微调模型) → EX 准确率 71.86%
 ```
 
 ## 数据集
@@ -87,7 +87,7 @@ model_name_or_path: /path/to/Qwen3-8B
 ### method
 stage: sft
 finetuning_type: lora
-lora_rank: 32
+lora_rank: 8
 lora_alpha: 64
 
 ### dataset
@@ -130,18 +130,48 @@ llamafactory-cli train config/sft.yaml
 ```
 
 **硬件要求**: RTX 4090 (24GB) × 1
-**训练时间**: 约 3-4 小时
-**预期结果**: EX 准确率 ~78%
+**训练时间**: 约 2 小时
 
-### Step 4: 模型评测
+## 评测结果
 
-```bash
-python scripts/evaluate_vllm.py \
-    --model_path /path/to/Qwen3-8B \
-    --adapter_path models/sft/qwen3-8b-spider \
-    --spider_dir dataset \
-    --stage sft
-```
+### Qwen3-8B SFT（Spider dev 全量 1034 样本）
+
+| 指标 | 准确率 | 说明 |
+|------|--------|------|
+| **Execution Accuracy** | **71.86%** | SQL 执行结果一致 |
+| **Exact Match** | **63.93%** | SQL 结构完全匹配 |
+
+### 按难度分级
+
+| 难度 | 样本数 | Execution | Exact Match |
+|------|--------|-----------|-------------|
+| easy | 248 | 87.90% | 82.66% |
+| medium | 446 | 72.87% | 68.16% |
+| hard | 174 | 67.82% | 54.02% |
+| extra | 166 | 49.40% | 34.94% |
+| **all** | **1034** | **71.86%** | **63.93%** |
+
+### exec vs exact 的区别
+
+| 指标 | 说明 |
+|------|------|
+| **exec** | 把预测 SQL 和标准 SQL 都在真实数据库上执行，结果一致就对 |
+| **exact** | 把 SQL 解析成结构，逐 clause 比对（select/where/group by 等），结构完全一致才算对 |
+
+- `exec` 通常 >= `exact`（差值说明语义对但写法不完全一致）
+- 两者差约 **8%**，说明模型部分 SQL 语义正确但结构与标准答案有差异
+
+### SFT vs Zero-shot 对比
+
+| 难度 | Zero-shot EX | SFT EX | 提升 |
+|------|-------------|--------|------|
+| easy | 72.18% | 87.90% | +15.72% |
+| medium | 45.96% | 72.87% | +26.91% |
+| hard | 25.86% | 67.82% | +41.96% |
+| extra | 15.06% | 49.40% | +34.34% |
+| **all** | **43.91%** | **71.86%** | **+27.95%** |
+
+SFT 微调在所有难度级别上都带来了显著提升，尤其是 hard 和 extra 级别的增幅最大。
 
 ## 训练参数说明
 
@@ -165,7 +195,7 @@ Step 4: 计算梯度 → 累加
 
 | 参数 | 值 | 说明 |
 |------|---|------|
-| `lora_rank` | 32 | LoRA 秩，越大容量越大 |
+| `lora_rank` | 8 | LoRA 秩，越大容量越大 |
 | `lora_alpha` | 64 | LoRA 缩放因子，通常 2× rank |
 | `lora_target` | all | 作用于所有层 |
 | `val_size` | 0.1 | 10% 数据作为验证集 |
