@@ -4,6 +4,22 @@
 
 AlignSQL 以 NL2SQL 为切入点，完整跑通大语言模型微调的 **SFT + DPO 全链路**，覆盖数据处理、LoRA 微调、偏好对自动构建、执行准确率评估等环节。
 
+## Spider 数据集难度分布
+
+Spider 数据集按 SQL 复杂度分为 4 个难度级别：
+
+| 难度 | 占比 | SQL 特征 | 示例 |
+|------|:----:|----------|------|
+| Easy | 31.7% | 简单 SELECT + WHERE | `SELECT name FROM users WHERE age > 18` |
+| Medium | 53.7% | 聚合/GROUP BY/ORDER BY | `SELECT count(*) FROM head WHERE age > 56` |
+| Hard | 7.0% | 多表 JOIN / 子查询 | `SELECT * FROM A WHERE id NOT IN (SELECT id FROM B)` |
+| Extra | 7.5% | UNION / INTERSECT | `SELECT name FROM A INTERSECT SELECT name FROM B` |
+
+使用 `scripts/analyze_difficulty.py` 分析数据集难度分布：
+```bash
+python scripts/analyze_difficulty.py -i dataset/train-00000-of-00001.parquet
+```
+
 ## 整体流程
 
 > 待完善
@@ -80,10 +96,11 @@ AlignSQL/
 │   └── dpo/                   # DPO 偏好数据
 ├── scripts/                   # 脚本
 │   ├── prepare_sft.py        # Spider → Alpaca 格式
+│   ├── analyze_difficulty.py # 数据集难度分析
 │   ├── generate_candidates.py # SFT 模型生成候选 SQL
 │   ├── build_preferences.py  # 执行反馈构建偏好对
-│   ├── evaluate.py           # 统一评测脚本（--stage 区分）
-│   └── run.sh                # 一键全流程
+│   ├── evaluate_vllm.py      # 统一评测脚本（--stage 区分）
+│   └── run_zeroshot.sh       # 批量运行脚本
 ├── models/                    # 模型权重输出
 │   ├── sft/                  # SFT adapter 权重
 │   └── dpo/                  # DPO adapter 权重
@@ -109,7 +126,7 @@ AlignSQL/
 
 ## License
 
-MIT
+[MIT](LICENSE)
 
 ## 致谢
 
@@ -117,3 +134,4 @@ MIT
 - [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) — 微调框架
 - [Spider](https://yale-lily.github.io/spider) — 数据集
 - [Weights & Biases](https://wandb.ai) — 实验追踪
+- [DB-GPT-Hub](https://github.com/eosphoros-ai/DB-GPT-Hub) — 方案参考
