@@ -16,7 +16,8 @@ from tqdm import tqdm
 from vllm import LLM, SamplingParams
 
 
-SYSTEM_PROMPT = """You are an expert SQLite SQL generator.
+SYSTEM_PROMPTS = {
+    "zeroshot": """You are an expert SQLite SQL generator.
 
 CRITICAL RULES:
 1. Output ONLY the raw SQL query
@@ -28,18 +29,46 @@ CRITICAL RULES:
 CORRECT example:
 SELECT name FROM users WHERE age > 18;
 
-Now generate the SQL query."""
+Now generate the SQL query.""",
+
+    "sft": """You are an expert SQLite SQL generator.
+
+Given the database schema and question, output the correct SQL query.
+
+CRITICAL RULES:
+1. Output ONLY the raw SQL query - no markdown, no explanation
+2. Start with SELECT/WITH/INSERT/UPDATE/DELETE, end with semicolon
+3. Always use table_name.column_name when column name may be ambiguous
+4. Use proper JOIN ... ON syntax for foreign key relationships
+
+CORRECT example:
+SELECT u.name, COUNT(o.id) as order_count
+FROM users u JOIN orders o ON u.id = o.user_id
+GROUP BY u.name;""",
+
+    "dpo": """Given the database schema and question, generate the correct SQL query.
+
+Reminder:
+- Output only raw SQL, no markdown or explanation
+- Start with SELECT/WITH/INSERT/UPDATE/DELETE
+- End with semicolon
+- Use table_name.column_name for disambiguation when needed""",
+}
 
 SQL_KEYWORDS = ("SELECT", "WITH", "INSERT", "UPDATE", "DELETE")
 
 
-def build_prompt(schema_str: str, question: str) -> str:
-    return f"""Database Schema:
+def build_prompt(schema_str: str, question: str, stage: str) -> str:
+    base = f"""Database Schema:
 {schema_str}
 
 Question: {question}
 
-SQL Query:"""
+"""
+    if stage == "dpo":
+        return base + "SQL:"
+    else:
+        return base + "SQL Query:"
 
 
 def load_schema(spider_dir: Path, db_id: str) -> str:
@@ -179,11 +208,12 @@ def compare_results(r1: List, r2: List) -> bool:
     return rows1 == rows2
 
 
-def batch_generate_sql(llm: LLM, tokenizer, prompts: List[str], max_new_tokens: int, temperature: float) -> List[str]:
+def batch_generate_sql(llm: LLM, tokenizer, prompts: List[str], max_new_tokens: int, temperature: float, stage: str) -> List[str]:
+    system_prompt = SYSTEM_PROMPTS[stage]
     formatted = []
     for p in prompts:
         text = tokenizer.apply_chat_template(
-            [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": p}],
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": p}],
             tokenize=False, add_generation_prompt=True
         )
         for tok in ['<|think|>', '</think|>', '<|reserved_2066|>']:
@@ -241,8 +271,8 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
         return [], 0.0
     
     print(f"Evaluating {len(valid_idx)} samples...")
-    prompts = [build_prompt(schemas[i], questions[i]) for i in valid_idx]
-    pred_sqls = batch_generate_sql(llm, tokenizer, prompts, max_new_tokens, temperature)
+    prompts = [build_prompt(schemas[i], questions[i], stage) for i in valid_idx]
+    pred_sqls = batch_generate_sql(llm, tokenizer, prompts, max_new_tokens, temperature, stage)
     
     correct = 0
     results = []

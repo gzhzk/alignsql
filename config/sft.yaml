@@ -1,0 +1,54 @@
+# AlignSQL SFT Training Config
+# LLaMA-Factory configuration for Qwen3-8B on Spider dataset
+
+### model
+model_name_or_path: /root/autodl-tmp/models/Qwen3-8B
+model_revision: main
+quantization_bit: null
+
+### method
+stage: sft
+finetuning_type: lora
+lora_rank: 32
+lora_alpha: 64
+lora_dropout: 0.05
+lora_target: all
+
+### dataset
+dataset: spider_sft
+template: qwen3
+cutoff_len: 2048
+max_samples: 7000
+val_size: 0.1
+overwrite_cache: true
+
+### output
+output_dir: models/sft/qwen3-8b-spider
+logging_steps: 10
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+
+### train
+num_train_epochs: 3
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-4
+warmup_ratio: 0.1
+lr_scheduler_type: cosine
+bf16: true
+full_df: false
+
+### eval
+eval_steps: 500
+eval_batch_size: 1
+
+### wandb
+flash_opt: false
+report_to:
+  - wandb
+wandb_project: alignsql-sft
+wandb_run_name: qwen3-8b-spider-sft
+
+### additional
+pooler_hidden_size: null

@@ -30,7 +30,7 @@ mkdir hf_dataset && cd hf_dataset
 uv venv --python 3.12
 uv pip install datasets
 
-# 下载 Spider（国内需 HF 镜像）
+# 下载 Spider 数据集（国内需 HF 镜像）
 export HF_ENDPOINT=https://hf-mirror.com
 uv run python scripts/download_spider.py
 ```

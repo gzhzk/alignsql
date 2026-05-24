@@ -1,8 +1,8 @@
-# AlignSQL
+# AlignSQL：Qwen3-8B 的 NL2SQL 全流程微调
 
-> 基于 Qwen3-8B 的 NL2SQL 全流程微调，从 SFT 到 DPO 的完整对齐实践。
-
-AlignSQL 以 NL2SQL 为切入点，完整跑通大语言模型微调的 **SFT + DPO 全链路**，覆盖数据处理、LoRA 微调、偏好对自动构建、执行准确率评估等环节。
+> 从 SFT 到 DPO，完整跑通 NL2SQL 的模型对齐实践。
+>
+> 基座模型：Qwen3-8B | 数据集：Spider | 框架：LLaMA-Factory | 硬件：RTX 4090 (24GB)
 
 ## 整体流程
 
