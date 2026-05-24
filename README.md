@@ -4,22 +4,6 @@
 
 AlignSQL 以 NL2SQL 为切入点，完整跑通大语言模型微调的 **SFT + DPO 全链路**，覆盖数据处理、LoRA 微调、偏好对自动构建、执行准确率评估等环节。
 
-## Spider 数据集难度分布
-
-Spider 数据集按 SQL 复杂度分为 4 个难度级别：
-
-| 难度 | 占比 | SQL 特征 | 示例 |
-|------|:----:|----------|------|
-| Easy | 31.7% | 简单 SELECT + WHERE | `SELECT name FROM users WHERE age > 18` |
-| Medium | 53.7% | 聚合/GROUP BY/ORDER BY | `SELECT count(*) FROM head WHERE age > 56` |
-| Hard | 7.0% | 多表 JOIN / 子查询 | `SELECT * FROM A WHERE id NOT IN (SELECT id FROM B)` |
-| Extra | 7.5% | UNION / INTERSECT | `SELECT name FROM A INTERSECT SELECT name FROM B` |
-
-使用 `scripts/analyze_difficulty.py` 分析数据集难度分布：
-```bash
-python scripts/analyze_difficulty.py -i dataset/train-00000-of-00001.parquet
-```
-
 ## 整体流程
 
 > 待完善
@@ -30,9 +14,9 @@ python scripts/analyze_difficulty.py -i dataset/train-00000-of-00001.parquet
 
 ```bash
 # 测试 Qwen3-8B 基座模型的零样本能力
-python scripts/evaluate.py \
+python scripts/evaluate_vllm.py \
     --model_path /path/to/Qwen3-8B \
-    --spider_dir /path/to/spider \
+    --spider_dir dataset \
     --stage zeroshot
 ```
 
@@ -75,43 +59,25 @@ DPO 的主要增益集中在 Hard / Extra Hard 级别的复杂 SQL 上。
 
 - **基座模型**：Qwen3-8B
 - **微调框架**：LLaMA-Factory (LoRA)
+- **推理加速**：vLLM
 - **数据集**：Spider
 - **实验追踪**：Weights & Biases
 - **硬件**：RTX 4090 (24GB) × 1
 
-## 项目结构
+## Spider 数据集难度分布
 
-```
-AlignSQL/
-├── config/                     # 配置文件
-│   ├── sft.yaml               # SFT 训练配置
-│   └── dpo.yaml               # DPO 训练配置
-├── dataset/                   # 数据目录 (git 排除 database/)
-│   ├── train-*.parquet        # 训练数据（HuggingFace 格式）
-│   ├── validation-*.parquet   # 验证数据
-│   ├── train_spider.json      # 训练集（JSON 格式）
-│   ├── dev.json               # 开发集
-│   ├── tables.json            # Schema 定义
-│   ├── database/              # SQLite 数据库（需单独下载）
-│   └── test_database/         # 测试数据库（需单独下载）
-├── scripts/                   # 脚本
-│   ├── prepare_sft.py        # Spider → Alpaca 格式
-│   ├── analyze_difficulty.py # 数据集难度分析
-│   ├── generate_candidates.py # SFT 模型生成候选 SQL
-│   ├── build_preferences.py  # 执行反馈构建偏好对
-│   ├── evaluate_vllm.py      # 统一评测脚本（--stage 区分）
-│   └── run_zeroshot.sh       # 批量运行脚本
-├── models/                    # 模型权重输出
-│   ├── sft/                  # SFT adapter 权重
-│   └── dpo/                  # DPO adapter 权重
-├── experiments/               # 实验结果
-│   ├── zeroshot/             # Zero-shot 结果
-│   │   └── results.json
-│   ├── sft/                  # SFT 结果
-│   │   └── results.json
-│   └── dpo/                  # DPO 结果
-│       └── results.json
-└── README.md
+Spider 数据集按 SQL 复杂度分为 4 个难度级别：
+
+| 难度 | 占比 | SQL 特征 |
+|------|:----:|----------|
+| Easy | 31.7% | 简单 SELECT + WHERE |
+| Medium | 53.7% | 聚合/GROUP BY/ORDER BY |
+| Hard | 7.0% | 多表 JOIN / 子查询 |
+| Extra | 7.5% | UNION / INTERSECT |
+
+```bash
+# 分析数据集难度分布
+python scripts/analyze_difficulty.py -i dataset/train-00000-of-00001.parquet
 ```
 
 ## 数据集
@@ -126,6 +92,31 @@ AlignSQL/
 
 > **注意**：`dataset/database/` 和 `dataset/test_database/` 不包含在 git 仓库中，需要单独下载。
 
+## 项目结构
+
+```
+AlignSQL/
+├── config/                     # 配置文件
+│   ├── sft.yaml               # SFT 训练配置
+│   └── dpo.yaml               # DPO 训练配置
+├── dataset/                   # 数据目录
+│   ├── train-*.parquet        # 训练数据
+│   ├── validation-*.parquet   # 验证数据
+│   ├── train_spider.json      # 训练集
+│   ├── dev.json               # 开发集
+│   ├── tables.json            # Schema 定义
+│   ├── database/              # SQLite 数据库（需单独下载）
+│   └── test_database/         # 测试数据库（需单独下载）
+├── scripts/                   # 脚本
+│   ├── prepare_sft.py        # 数据预处理
+│   ├── analyze_difficulty.py # 难度分析
+│   ├── evaluate_vllm.py     # 评测脚本
+│   └── ...
+├── models/                    # 模型权重输出
+├── experiments/               # 实验结果
+└── README.md
+```
+
 ## 详细方案
 
 项目技术方案文档见 [docs/project_report.md](docs/project_report.md)，包含：
@@ -134,7 +125,6 @@ AlignSQL/
 - SFT 与 DPO 训练配置详解
 - 偏好对自动构建逻辑
 - 评估方法与预期结果
-- 实验追踪配置（wandb）
 
 ## License
 
@@ -144,6 +134,6 @@ AlignSQL/
 
 - [Qwen3](https://github.com/QwenLM/Qwen3) — 基座模型
 - [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) — 微调框架
-- [Spider](https://yale-lily.github.io/spider) — 数据集
+- [Spider](https://yale-lily.github.io/spider) — 数据集（CC BY-SA 4.0）
 - [Weights & Biases](https://wandb.ai) — 实验追踪
 - [DB-GPT-Hub](https://github.com/eosphoros-ai/DB-GPT-Hub) — 方案参考
