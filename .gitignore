@@ -27,3 +27,19 @@ wandb/
 # Environment
 .env
 *.env.local
+
+# Model weights
+*.safetensors
+*.bin
+*.pth
+*.ckpt
+*.pt
+
+# Adapter and merged models
+models/sft/adapter/
+models/sft/merged/
+
+# Training outputs
+outputs/
+logs/
+checkpoints/
