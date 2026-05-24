@@ -261,7 +261,7 @@ def main():
                         help='数据集目录')
     parser.add_argument('--input', type=str, default=None,
                         help='输入文件路径（默认使用 train-00000-of-00001.parquet）')
-    parser.add_argument('--output', type=str, default='data/sft_data.json',
+    parser.add_argument('--output', type=str, default='data_processed/sft_data.json',
                         help='输出文件路径')
     parser.add_argument('--max_samples', type=int, default=-1,
                         help='最大样本数（-1 表示全部）')
