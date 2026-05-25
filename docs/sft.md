@@ -9,7 +9,7 @@ AlignSQL 使用 LLaMA-Factory 对 Qwen3-8B 进行 SFT 训练，实现 Text-to-SQ
 ```
 Qwen3-8B (基座)
     ↓ SFT
-AlignSQL (微调模型) → EX 准确率 71.86%
+AlignSQL (微调模型) → EX 准确率 72.24%
 ```
 
 ## 数据集
@@ -83,27 +83,45 @@ The head_ID of management is the foreign key of head_ID of head.
 ```yaml
 ### model
 model_name_or_path: /path/to/Qwen3-8B
+trust_remote_code: true
 
 ### method
 stage: sft
 finetuning_type: lora
 lora_rank: 8
-lora_alpha: 64
+lora_alpha: 16
+lora_dropout: 0
+lora_target: all
+enable_thinking: false
 
 ### dataset
 dataset: spider_sft
-template: qwen2
-cutoff_len: 2048
+dataset_dir: data
+template: qwen3_nothink
+cutoff_len: 1024
+max_samples: 100000
+val_size: 0.1
+preprocessing_num_workers: 16
 
 ### output
 output_dir: models/sft/qwen3-8b-spider
+logging_steps: 5
+save_steps: 100
 
 ### train
 num_train_epochs: 3
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 8
-learning_rate: 1.0e-4
+learning_rate: 1e-4
+lr_scheduler_type: cosine
+warmup_steps: 0
+max_grad_norm: 1.0
 bf16: true
+flash_attn: auto
+optim: adamw_torch
+
+### wandb
+report_to: wandb
 ```
 
 配置 `config/dataset_info.json`:
@@ -138,18 +156,18 @@ llamafactory-cli train config/sft.yaml
 
 | 指标 | 准确率 | 说明 |
 |------|--------|------|
-| **Execution Accuracy** | **71.86%** | SQL 执行结果一致 |
-| **Exact Match** | **63.93%** | SQL 结构完全匹配 |
+| **Execution Accuracy** | **72.24%** | SQL 执行结果一致 |
+| **Exact Match** | **67.41%** | SQL 结构完全匹配 |
 
 ### 按难度分级
 
 | 难度 | 样本数 | Execution | Exact Match |
 |------|--------|-----------|-------------|
-| easy | 248 | 87.90% | 82.66% |
-| medium | 446 | 72.87% | 68.16% |
-| hard | 174 | 67.82% | 54.02% |
-| extra | 166 | 49.40% | 34.94% |
-| **all** | **1034** | **71.86%** | **63.93%** |
+| easy | 248 | 89.11% | 83.06% |
+| medium | 446 | 74.44% | 74.22% |
+| hard | 174 | 65.52% | 52.87% |
+| extra | 166 | 48.19% | 40.96% |
+| **all** | **1034** | **72.24%** | **67.41%** |
 
 ### exec vs exact 的区别
 
@@ -159,17 +177,17 @@ llamafactory-cli train config/sft.yaml
 | **exact** | 把 SQL 解析成结构，逐 clause 比对（select/where/group by 等），结构完全一致才算对 |
 
 - `exec` 通常 >= `exact`（差值说明语义对但写法不完全一致）
-- 两者差约 **8%**，说明模型部分 SQL 语义正确但结构与标准答案有差异
+- 两者差约 **5%**，说明模型生成的 SQL 语义正确性较高，与标准答案结构差异较小
 
 ### SFT vs Zero-shot 对比
 
 | 难度 | Zero-shot EX | SFT EX | 提升 |
 |------|-------------|--------|------|
-| easy | 72.18% | 87.90% | +15.72% |
-| medium | 45.96% | 72.87% | +26.91% |
-| hard | 25.86% | 67.82% | +41.96% |
-| extra | 15.06% | 49.40% | +34.34% |
-| **all** | **43.91%** | **71.86%** | **+27.95%** |
+| easy | 72.18% | 89.11% | +16.93% |
+| medium | 45.96% | 74.44% | +28.48% |
+| hard | 25.86% | 65.52% | +39.66% |
+| extra | 15.06% | 48.19% | +33.13% |
+| **all** | **43.91%** | **72.24%** | **+28.33%** |
 
 SFT 微调在所有难度级别上都带来了显著提升，尤其是 hard 和 extra 级别的增幅最大。
 
