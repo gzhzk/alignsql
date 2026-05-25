@@ -36,20 +36,9 @@ SELECT name FROM users WHERE age > 18;
 
 Now generate the SQL query.""",
 
-    "sft": """You are an expert SQLite SQL generator.
-
-Given the database schema and question, output the correct SQL query.
-
-CRITICAL RULES:
-1. Output ONLY the raw SQL query - no markdown, no explanation
-2. Start with SELECT/WITH/INSERT/UPDATE/DELETE, end with semicolon
-3. Always use table_name.column_name when column name may be ambiguous
-4. Use proper JOIN ... ON syntax for foreign key relationships
-
-CORRECT example:
-SELECT u.name, COUNT(o.id) as order_count
-FROM users u JOIN orders o ON u.id = o.user_id
-GROUP BY u.name;""",
+    "sft": """I want you to act as a SQL terminal in front of an example database,
+you need only to return the sql command to me.
+Below is an instruction that describes a task, Write a response that appropriately completes the request.""",
 
     "dpo": """Given the database schema and question, generate the correct SQL query.
 
@@ -63,7 +52,20 @@ Reminder:
 SQL_KEYWORDS = ("SELECT", "WITH", "INSERT", "UPDATE", "DELETE")
 
 
+TASK_INSTRUCTION = "Convert the following question to a SQL query based on the database schema."
+
+
 def build_prompt(schema_str: str, question: str, stage: str) -> str:
+    if stage == "sft":
+        return f"""{TASK_INSTRUCTION}
+
+###Input:
+{schema_str}
+
+Question: {question}
+
+###Response:"""
+
     base = f"""Database Schema:
 {schema_str}
 
@@ -76,28 +78,69 @@ Question: {question}
         return base + "SQL Query:"
 
 
-def load_schema(spider_dir: Path, db_id: str) -> str:
+def load_schema(spider_dir: Path, db_id: str, stage: str = "zeroshot") -> str:
     tables_file = spider_dir / "tables.json"
     with open(tables_file, "r", encoding="utf-8") as f:
         tables_data = json.load(f)
-    
+
     db_schema = None
     for db in tables_data:
         if db["db_id"] == db_id:
             db_schema = db
             break
-    
+
     if db_schema is None:
         raise ValueError(f"Database '{db_id}' not found")
-    
+
     table_names = db_schema["table_names_original"]
     column_names = db_schema["column_names_original"]
-    column_types = db_schema["column_types"]
-    primary_keys = set(db_schema.get("primary_keys", []))
+    primary_keys = db_schema.get("primary_keys", [])
     foreign_keys = db_schema.get("foreign_keys", [])
-    
+
+    if stage == "sft":
+        # Natural language format matching training data (DB-GPT-Hub style)
+        schema_parts = []
+        for table_idx, table_name in enumerate(table_names):
+            cols = []
+            for i in range(len(column_names)):
+                col = column_names[i]
+                if col[0] == table_idx:
+                    cols.append(col[1])
+            schema_parts.append(f"Table {table_name} has columns such as {', '.join(cols)}.")
+
+        schema_str = f"{db_id} contains tables such as {', '.join(table_names)}.\n"
+        schema_str += " ".join(schema_parts)
+
+        pk_parts = []
+        for pk in primary_keys:
+            if isinstance(pk, int) and pk < len(column_names):
+                col = column_names[pk]
+                if col[0] < len(table_names):
+                    pk_parts.append(f"{table_names[col[0]]}.{col[1]} is the primary key")
+        if pk_parts:
+            schema_str += "\n" + ". ".join(pk_parts) + "."
+
+        fk_parts = []
+        for fk in foreign_keys:
+            if len(fk) == 2:
+                i1, i2 = fk
+                if i1 < len(column_names) and i2 < len(column_names):
+                    c1, c2 = column_names[i1], column_names[i2]
+                    t1, t2 = c1[0], c2[0]
+                    if t1 < len(table_names) and t2 < len(table_names):
+                        fk_parts.append(
+                            f"The {c1[1]} of {table_names[t1]} is the foreign key of {c2[1]} of {table_names[t2]}"
+                        )
+        if fk_parts:
+            schema_str += "\n" + ". ".join(fk_parts) + "."
+
+        return schema_str
+
+    # Structured format with column types (zeroshot / dpo)
+    column_types = db_schema["column_types"]
+    primary_keys_set = set(primary_keys)
+
     schema_parts = []
-    
     for table_idx, table_name in enumerate(table_names):
         cols = []
         for i in range(len(column_names)):
@@ -105,13 +148,13 @@ def load_schema(spider_dir: Path, db_id: str) -> str:
             if col[0] == table_idx:
                 col_name = col[1]
                 col_type = column_types[i] if i < len(column_types) else "TEXT"
-                pk_mark = " PRIMARY KEY" if i in primary_keys else ""
+                pk_mark = " PRIMARY KEY" if i in primary_keys_set else ""
                 cols.append(f"    {col_name} {col_type}{pk_mark}")
-        
+
         schema_parts.append(f"Table: {table_name}\nColumns:\n" + "\n".join(cols))
-    
+
     schema_str = "\n\n".join(schema_parts)
-    
+
     if foreign_keys:
         schema_str += "\n\nForeign Key Relationships:"
         for fk in foreign_keys:
@@ -123,7 +166,7 @@ def load_schema(spider_dir: Path, db_id: str) -> str:
                     if t1 < len(table_names) and t2 < len(table_names):
                         n1, n2 = table_names[t1], table_names[t2]
                         schema_str += f"\n  {n1}.{c1[1]} = {n2}.{c2[1]}"
-    
+
     return schema_str
 
 
@@ -350,7 +393,7 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
             "question": item["question"],
             "gold_sql": item["query"],
             "db_path": str(db_path) if has_db else "",
-            "schema": load_schema(spider_path, db_id),
+            "schema": load_schema(spider_path, db_id, stage),
             "has_db": has_db,
         })
     
