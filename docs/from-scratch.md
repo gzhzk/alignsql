@@ -2,8 +2,6 @@
 
 > 从零搭建 AlignSQL 项目的完整操作日志。
 
----
-
 ## 一、项目设计
 
 **时间：** 项目启动阶段  
@@ -78,7 +76,7 @@ apt-get update && apt-get install tmux -y
 tmux new -s alignsql
 ```
 
-### 5.2 克隆项目与框架
+### 5.2 克隆项目与框架（[官方安装教程](https://llamafactory.readthedocs.io/zh-cn/latest/getting_started/installation.html)）
 
 ```bash
 # 开启学术加速
@@ -208,7 +206,7 @@ Currently logged in as: <用户名> to https://api.wandb.ai
 
 ```yaml
 report_to: wandb
-run_name: sft_lora32_lr2e4   # 可选，方便区分实验
+run_name: qwen3-8b-spoder-sft   # 可选，方便区分实验
 ```
 
 ---

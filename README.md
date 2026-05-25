@@ -14,13 +14,18 @@
 
 ```bash
 # 测试 Qwen3-8B 基座模型的零样本能力
+bash scripts/run_zeroshot.sh
+```
+
+或直接：
+```bash
 python scripts/evaluate_vllm.py \
     --model_path /path/to/Qwen3-8B \
     --spider_dir dataset \
     --stage zeroshot
 ```
 
-### Phase 2: SFT 训练
+### Phase 2: SFT 训练与评测
 
 ```bash
 # 数据预处理：Spider → Alpaca 格式
@@ -28,6 +33,9 @@ python scripts/prepare_sft.py
 
 # 启动 SFT 训练
 llamafactory-cli train config/sft.yaml
+
+# 模型合并与评测
+bash scripts/run_sft.sh
 ```
 
 核心配置：Qwen3-8B + LoRA (rank=8) + 梯度累积 ×8，单卡 RTX 4090 上约 2 小时。
@@ -103,41 +111,48 @@ python scripts/analyze_difficulty.py -i dataset/train-00000-of-00001.parquet
 
 ```
 AlignSQL/
-├── config/                     # 配置文件
-│   ├── sft.yaml               # SFT 训练配置
-│   ├── dpo.yaml               # DPO 训练配置
-│   └── merge_sft.yaml         # 模型合并配置
-├── dataset/                   # 原始数据集
-│   ├── train_spider.json      # 训练集
-│   ├── dev.json               # 开发集
-│   ├── tables.json            # Schema 定义
-│   ├── database/              # SQLite 数据库（需单独下载）
-│   └── test_database/         # 测试数据库（需单独下载）
+├── assets/                    # 实验图表
+│   ├── sft-train-loss.png
+│   ├── sft-eval-loss.png
+│   └── sft-learning-rate.png
+├── config/                    # 配置文件
+│   ├── sft.yaml             # SFT 训练配置
+│   ├── merge_sft.yaml       # 模型合并配置
+│   └── dataset_info.json    # 数据集定义
+├── dataset/                  # 原始数据集
+│   ├── train_spider.json     # 训练集
+│   ├── train_others.json     # 训练补充
+│   ├── dev.json             # 开发集
+│   ├── test.json            # 测试集
+│   ├── tables.json          # Schema 定义
+│   ├── database/            # SQLite 数据库（需单独下载）
+│   └── test_database/       # 测试数据库（需单独下载）
 ├── data_processed/            # 处理后的数据（SFT/DPO 格式）
-│   └── sft_data.json         # Alpaca 格式训练数据
-├── scripts/                   # 脚本
-│   ├── prepare_sft.py        # SFT 数据预处理
-│   ├── generate_candidates.py # DPO 候选生成
-│   ├── build_preferences.py   # 偏好对构建
-│   └── evaluate_vllm.py      # 评测脚本
-├── models/                    # 模型权重
-│   ├── sft/                  # SFT LoRA 权重
-│   │   └── adapter/          # LoRA adapter (可上传)
-│   └── dpo/                  # DPO 权重（待训练）
-├── experiments/               # 实验结果
-│   ├── zeroshot/             # Zero-shot 结果
-│   └── sft/                  # SFT 实验结果
+│   └── sft_data.json       # Alpaca 格式训练数据
 ├── docs/                      # 详细文档
-│   ├── project_report.md     # 项目报告
-│   ├── evaluation.md         # 评测系统
-│   ├── zeroshot.md           # Zero-shot 方案
-│   └── sft.md                # SFT 训练流程
+│   ├── project-report.md    # 项目报告
+│   ├── sft.md               # SFT 训练流程
+│   ├── zeroshot.md          # Zero-shot 方案
+│   ├── evaluation.md        # 评测系统
+│   ├── data-preprocess.md   # SFT 数据预处理
+│   └── from-scratch.md      # 从零搭建环境指南
+├── scripts/                   # 脚本
+│   ├── prepare_sft.py      # SFT 数据预处理
+│   ├── evaluate_vllm.py    # 评测脚本
+│   ├── evaluation.py        # 官方评测脚本
+│   ├── process_sql.py       # 官方 SQL 解析工具
+│   ├── analyze_difficulty.py # 难度分析
+│   ├── run_sft.sh          # SFT 评测脚本
+│   └── run_zeroshot.sh     # Zero-shot 评测脚本
+├── results/                    # 实验结果
+│   ├── zeroshot/              # Zero-shot 结果
+│   └── sft/                   # SFT 实验结果
 └── README.md
 ```
 
 ## 详细方案
 
-项目技术方案文档见 [docs/project_report.md](docs/project_report.md)，包含：
+项目技术方案文档见 [docs/project-report.md](docs/project-report.md)，包含：
 
 - 数据准备与 Schema 序列化设计
 - SFT 与 DPO 训练配置详解
