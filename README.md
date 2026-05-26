@@ -1,173 +1,99 @@
-# AlignSQL：Qwen3-8B 的 NL2SQL 全流程微调
+# AlignSQL：NL2SQL 全流程 Post-training Pipeline
 
-> 从 SFT 到 DPO，完整跑通 NL2SQL 的模型对齐实践。
+> 从 SFT 到 DPO 再到 RL，完整跑通 NL2SQL 的模型对齐实践。
 >
-> 基座模型：Qwen3-8B | 数据集：Spider | 框架：LLaMA-Factory | 硬件：RTX 4090 (24GB)
+> 基座模型：Qwen3-8B | 框架：LLaMA-Factory | 硬件：RTX 4090 (24GB)
 
-## 整体流程
-
-> 待完善
-
-## 快速开始
-
-### Phase 1: Zero-shot Baseline
-
-```bash
-# 测试 Qwen3-8B 基座模型的零样本能力
-bash scripts/run_zeroshot.sh
-```
-
-或直接：
-```bash
-python scripts/evaluate_vllm.py \
-    --model_path /path/to/Qwen3-8B \
-    --spider_dir dataset \
-    --stage zeroshot
-```
-
-### Phase 2: SFT 训练与评测
-
-```bash
-# 数据预处理：Spider → Alpaca 格式
-python scripts/prepare_sft.py
-
-# 启动 SFT 训练
-llamafactory-cli train config/sft.yaml
-
-# 模型合并与评测
-bash scripts/run_sft.sh
-```
-
-核心配置：Qwen3-8B + LoRA (rank=8) + 梯度累积 ×8，单卡 RTX 4090 上约 2 小时。
-
-### Phase 3: DPO 偏好对齐
-
-```bash
-# SFT 模型生成候选 SQL
-python scripts/generate_candidates.py
-
-# 执行反馈构建偏好对
-python scripts/build_preferences.py
-
-# 启动 DPO 训练
-llamafactory-cli train config/dpo.yaml
-```
+---
 
 ## 实验结果
 
-| 阶段 | Spider Dev (EX) | Exact Match | 说明 |
-|------|:---------------:|:-----------:|------|
-| Zero-shot (baseline) | 43.91% | 35.69% | Qwen3-8B 直接 prompt |
-| SFT 后 | 72.24% | 67.41% | LoRA 微调 (rank=8) |
-| DPO 后 | - | - | 待实验 |
+| 阶段 | Spider Dev (EX) | Exact Match | 状态 |
+|------|:---------------:|:-----------:|:----:|
+| Zero-shot (baseline) | 43.91% | 35.69% | ✅ |
+| SFT (LoRA rank=8) | 72.24% | 67.41% | ✅ |
 
 ### 按难度分级（SFT）
 
-| 难度 | 样本数 | Zero-shot | SFT | 提升 |
-|------|--------|-----------|-----|------|
-| easy | 248 | 72.18% | 89.11% | +16.93% |
-| medium | 446 | 45.96% | 74.44% | +28.48% |
-| hard | 174 | 25.86% | 65.52% | +39.66% |
-| extra | 166 | 15.06% | 48.19% | +33.13% |
+| 难度 | Zero-shot | SFT | 提升 |
+|------|-----------|-----|:----:|
+| easy | 72.18% | 89.11% | +16.93% |
+| medium | 45.96% | 74.44% | +28.48% |
+| hard | 25.86% | 65.52% | +39.66% |
+| extra | 15.06% | 48.19% | +33.13% |
 
-## 技术栈
-
-- **基座模型**：Qwen3-8B
-- **微调框架**：LLaMA-Factory (LoRA)
-- **推理加速**：vLLM
-- **数据集**：Spider
-- **实验追踪**：Weights & Biases
-- **硬件**：RTX 4090 (24GB) × 1
-
-## Spider 数据集难度分布
-
-Spider 数据集按 SQL 复杂度分为 4 个难度级别：
-
-| 难度 | 占比 | SQL 特征 |
-|------|:----:|----------|
-| Easy | 31.7% | 简单 SELECT + WHERE |
-| Medium | 53.7% | 聚合/GROUP BY/ORDER BY |
-| Hard | 7.0% | 多表 JOIN / 子查询 |
-| Extra | 7.5% | UNION / INTERSECT |
+## 快速开始
 
 ```bash
-# 分析数据集难度分布
-python scripts/analyze_difficulty.py -i dataset/train-00000-of-00001.parquet
+# Zero-shot 评测
+bash scripts/run_zeroshot.sh
+
+# SFT 训练与评测
+python scripts/prepare_sft.py
+llamafactory-cli train configs/spider/sft.yaml
+bash scripts/run_sft.sh
 ```
-
-## 数据集
-
-使用 [Spider](https://yale-lily.github.io/spider) 数据集（CC BY-SA 4.0）
-
-```bash
-# 下载完整数据集（含数据库）
-# 官方链接: https://drive.google.com/uc?id=1TqleXec_OykOYFREKKtschzY29dUcVAQ
-# 解压后放到 dataset/ 目录
-```
-
-> **注意**：`dataset/database/` 和 `dataset/test_database/` 不包含在 git 仓库中，需要单独下载。
 
 ## 项目结构
 
 ```
-AlignSQL/
-├── assets/                    # 实验图表
+├── alignsql/                      # Python 包 (pip install -e .)
+│   ├── __init__.py
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── preprocessing.py       # 难度分类、Prompt 构建
+│   │   ├── schema.py              # Schema 序列化 (多格式)
+│   │   └── spider.py              # Spider 数据加载器
+│   └── utils/
+│       ├── __init__.py
+│       ├── db.py                  # SQLite 执行工具
+│       └── io.py                  # JSON/JSONL 读写
+├── configs/                       # LLaMA-Factory 训练配置
+│   ├── dataset_info.json
+│   └── spider/
+│       ├── sft.yaml
+│       └── merge_sft.yaml
+├── scripts/                       # 可执行入口
+│   ├── prepare_sft.py             # SFT 数据预处理 (薄封装)
+│   ├── analyze_difficulty.py      # 难度分布分析 (薄封装)
+│   ├── evaluate_vllm.py           # 推理评测 (vLLM)
+│   ├── evaluation.py              # Spider 官方评估逻辑
+│   ├── process_sql.py             # SQL 解析工具
+│   ├── run_sft.sh
+│   └── run_zeroshot.sh
+├── tests/
+│   ├── test_data.py
+│   ├── test_schema.py
+│   └── test_utils.py
+├── experiments/                   # 实验结果
+│   ├── zeroshot/results.json
+│   └── sft/results.json
+├── assets/                        # 实验图表
 │   ├── sft-train-loss.png
 │   ├── sft-eval-loss.png
 │   └── sft-learning-rate.png
-├── config/                    # 配置文件
-│   ├── sft.yaml             # SFT 训练配置
-│   ├── merge_sft.yaml       # 模型合并配置
-│   └── dataset_info.json    # 数据集定义
-├── dataset/                  # 原始数据集
-│   ├── train_spider.json     # 训练集
-│   ├── train_others.json     # 训练补充
-│   ├── dev.json             # 开发集
-│   ├── test.json            # 测试集
-│   ├── tables.json          # Schema 定义
-│   ├── database/            # SQLite 数据库（需单独下载）
-│   └── test_database/       # 测试数据库（需单独下载）
-├── data_processed/            # 处理后的数据（SFT/DPO 格式）
-│   └── sft_data.json       # Alpaca 格式训练数据
-├── docs/                      # 详细文档
-│   ├── project-report.md    # 项目报告
-│   ├── sft.md               # SFT 训练流程
-│   ├── zeroshot.md          # Zero-shot 方案
-│   ├── evaluation.md        # 评测系统
-│   ├── data-preprocess.md   # SFT 数据预处理
-│   └── from-scratch.md      # 从零搭建环境指南
-├── scripts/                   # 脚本
-│   ├── prepare_sft.py      # SFT 数据预处理
-│   ├── evaluate_vllm.py    # 评测脚本
-│   ├── evaluation.py        # 官方评测脚本
-│   ├── process_sql.py       # 官方 SQL 解析工具
-│   ├── analyze_difficulty.py # 难度分析
-│   ├── run_sft.sh          # SFT 评测脚本
-│   └── run_zeroshot.sh     # Zero-shot 评测脚本
-├── results/                    # 实验结果
-│   ├── zeroshot/              # Zero-shot 结果
-│   └── sft/                   # SFT 实验结果
+├── docs/                          # 详细文档
+│   └── PLANNING.md
+├── setup.py
+├── Makefile
 └── README.md
 ```
 
 ## 详细方案
 
-项目技术方案文档见 [docs/project-report.md](docs/project-report.md)，包含：
+- [重构计划](docs/PLANNING.md)
+- [SFT 训练流程](docs/sft.md)
+- [项目报告](docs/project-report.md)
 
-- 数据准备与 Schema 序列化设计
-- SFT 与 DPO 训练配置详解
-- 偏好对自动构建逻辑
-- 评估方法与预期结果
+## 技术栈
+
+| 组件 | 选型 |
+|------|------|
+| 基座模型 | Qwen3-8B |
+| 微调框架 | LLaMA-Factory (LoRA) |
+| 推理加速 | vLLM |
+| 实验追踪 | Weights & Biases |
 
 ## License
 
 [MIT](LICENSE)
-
-## 致谢
-
-- [Qwen3](https://github.com/QwenLM/Qwen3) — 基座模型
-- [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) — 微调框架
-- [vLLM](https://github.com/vllm-project/vllm) — 推理加速
-- [Spider](https://yale-lily.github.io/spider) — 数据集（CC BY-SA 4.0）
-- [Weights & Biases](https://wandb.ai) — 实验追踪
-- [DB-GPT-Hub](https://github.com/eosphoros-ai/DB-GPT-Hub) — 方案参考
