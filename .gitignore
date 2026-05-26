@@ -9,10 +9,6 @@ build/
 .venv/
 venv/
 
-# Spider Database (downloaded separately, CC BY-SA 4.0)
-dataset/database/
-dataset/test_database/
-
 # IDE
 .vscode/
 .idea/
@@ -20,9 +16,6 @@ dataset/test_database/
 # OS
 .DS_Store
 Thumbs.db
-
-# wandb (local run files, not the experiment records on cloud)
-wandb/
 
 # Environment
 .env
@@ -35,11 +28,22 @@ wandb/
 *.ckpt
 *.pt
 
-# Adapter and merged models
-models/sft/adapter/
-models/sft/merged/
+# Wandb
+wandb/
+
+# Spider Database (downloaded separately)
+dataset/database/
+dataset/test_database/
+
+# BIRD Dataset (downloaded separately)
+dataset/bird/
 
 # Training outputs
 outputs/
 logs/
 checkpoints/
+
+# Adapter and merged models
+models/sft/
+models/dpo/
+models/grpo/
