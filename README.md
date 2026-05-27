@@ -46,11 +46,11 @@ bash scripts/run_sc.sh 5
 │   │   ├── preprocessing.py       # 难度分类、Prompt 构建
 │   │   ├── schema.py              # Schema 序列化
 │   │   └── spider.py              # Spider 数据加载器
-│   ├── models/                    # 模型训练/推理
-│   │   └── inference.py           # Self-Consistency 推理策略
-│   ├── analysis/                  # 错误分析、消融对比
+│   ├── models/                    # 模型推理策略
+│   │   └── inference.py           # Self-Consistency 采样 & 投票
 │   ├── eval/                      # 评估指标
 │   │   └── metrics.py
+│   ├── analysis/                  # 错误分析 (待实现)
 │   └── utils/                     # 工具函数
 │       ├── db.py                  # SQLite 执行工具
 │       └── io.py                  # JSON/JSONL 读写
@@ -63,20 +63,22 @@ bash scripts/run_sc.sh 5
 │       ├── sft.yaml
 │       └── merge_sft.yaml
 ├── scripts/                       # 可执行入口
-│   ├── evaluate_vllm.py           # 推理评测 (支持 SC)
+│   ├── evaluate_vllm.py           # 推理评测 (greedy / SC)
 │   ├── prepare_sft.py
 │   ├── analyze_difficulty.py
-│   ├── run_sft.sh
 │   ├── run_zeroshot.sh
-│   └── run_sc.sh
+│   ├── run_sft.sh
+│   └── run_sc.sh                  # SC 消融
 ├── tests/
-├── outputs/
-├── assets/
-│   ├── sft-train-loss.png
-│   ├── sft-eval-loss.png
-│   └── sft-learning-rate.png
+├── outputs/                       # 实验结果
+├── assets/                        # 实验图表
 ├── docs/
-└── setup.py
+├── dataset/                       # 原始数据 (Spider JSON + SQLite)
+├── data_processed/                # 预处理产物
+├── setup.py
+├── Makefile
+├── LICENSE
+└── .gitignore
 ```
 
 ## 详细方案

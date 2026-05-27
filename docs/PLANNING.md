@@ -60,35 +60,47 @@ AlignSQL/
 │   ├── data/
 │   │   ├── __init__.py
 │   │   ├── preprocessing.py       # 难度分类、Prompt 构建
-│   │   ├── schema.py              # Schema 序列化 (多格式)
+│   │   ├── schema.py              # Schema 序列化
 │   │   └── spider.py              # Spider 数据加载器
+│   ├── models/
+│   │   ├── __init__.py
+│   │   └── inference.py           # Self-Consistency 采样 & 投票
+│   ├── eval/
+│   │   ├── __init__.py
+│   │   └── metrics.py             # 结果比较、分数统计
+│   ├── analysis/
+│   │   └── __init__.py            # 错误分析 (待实现)
 │   └── utils/
 │       ├── __init__.py
 │       ├── db.py                  # SQLite 执行工具
 │       └── io.py                  # JSON/JSONL 读写
+├── vendor/                        # 第三方代码 (Spider 官方评测)
+│   ├── evaluation.py
+│   └── process_sql.py
 ├── configs/                       # LLaMA-Factory 训练配置
 │   ├── dataset_info.json
 │   └── spider/
 │       ├── sft.yaml
 │       └── merge_sft.yaml
-├── scripts/                       # 可执行入口
-│   ├── prepare_sft.py             # SFT 数据预处理 (薄封装)
-│   ├── analyze_difficulty.py      # 难度分布分析 (薄封装)
-│   ├── evaluate_vllm.py           # 推理评测 (vLLM)
-│   ├── evaluation.py              # Spider 官方评估逻辑
-│   ├── process_sql.py             # SQL 解析工具
+├── scripts/                       # 可执行入口 (薄层调用)
+│   ├── evaluate_vllm.py           # 推理评测 (greedy / SC 两模式)
+│   ├── prepare_sft.py             # SFT 数据预处理
+│   ├── analyze_difficulty.py      # 难度分析
+│   ├── run_zeroshot.sh
 │   ├── run_sft.sh
-│   └── run_zeroshot.sh
+│   └── run_sc.sh                  # Self-Consistency 消融
 ├── tests/
-│   ├── test_data.py               # 数据层测试
-│   ├── test_schema.py             # Schema 序列化测试
-│   └── test_utils.py              # 工具函数测试
+│   ├── test_data.py
+│   ├── test_schema.py
+│   └── test_utils.py
 ├── outputs/                       # 实验结果
 │   ├── zeroshot/results.json
 │   └── sft/results.json
 ├── assets/                        # 实验图表
 ├── docs/
 │   └── PLANNING.md               # 本文件
+├── data_processed/                # 预处理产物 (sft_data.json)
+├── dataset/                       # 原始数据 (Spider JSON + SQLite)
 ├── setup.py
 ├── Makefile
 ├── .gitignore
@@ -98,16 +110,14 @@ AlignSQL/
 ### 项目结构（后续按需添加）
 
 ```
-alignsql/
-├── models/                 # 模型训练 / 推理 (SFT / DPO / Self-Consistency)
-├── eval/                   # 评估 / 错误分析
-│
 configs/
 ├── bird/                   # BIRD 训练配置
 │
-outputs/
-├── dpo/                    # DPO 实验结果
-├── self_consistency/       # Self-Consistency 结果
+alignsql/
+├── data/
+│   └── bird.py             # BIRD 数据加载器
+└── models/
+    └── dpo_trainer.py      # DPO 训练逻辑
 ```
 
 ---
@@ -118,21 +128,24 @@ outputs/
 
 目标：从"脚本集合"变为"可安装包"
 
-- [x] 创建 `alignsql/` 包结构
+- [x] 创建 `alignsql/` 包结构（data / models / eval / analysis / utils）
 - [x] 抽取公共逻辑（db 工具、schema 序列化、数据加载）
-- [x] 保留 Spider 官方 evaluation.py + process_sql.py
+- [x] 迁移第三方代码到 `vendor/`（evaluation.py + process_sql.py）
 - [x] 编写 `setup.py` + `Makefile`
 - [x] 迁移现有实验数据到 `outputs/` 目录
+- [x] 将 Self-Consistency 逻辑封装到 `alignsql/models/inference.py`
+- [x] 集成 SC 到 `evaluate_vllm.py`（`--self_consistency` 开关）
 - [x] 补基础测试（data / schema / utils）
 - [x] 配置迁移：`config/` → `configs/spider/`
 
-### Phase 1：Self-Consistency 推理（1 天）
+### Phase 1：Self-Consistency 推理（1 天）✅
 
 目标：不改模型，最快提点
 
-- [ ] 实现 `alignsql/models/inference.py` — 批量采样 N 个候选
-- [ ] 实现执行结果投票逻辑
-- [ ] 对比不同 N（3/5/8/16）的效果
+- [x] 实现 `alignsql/models/inference.py` — 批量采样 N 个候选 + 执行投票
+- [x] 集成到 `evaluate_vllm.py`（`--self_consistency` 开关 + `--n_candidates`）
+- [x] 提供 `scripts/run_sc.sh` 消融脚本（greedy + N=3/5/8）
+- [ ] 对比不同 N（3/5/8/16）的效果（需 GPU 运行）
 - [ ] 在 Spider Dev 上跑通并记录结果
 - [ ] 移植到 BIRD 验证
 
