@@ -173,7 +173,7 @@ def compare_results(r1, r2):
 
 ## 输出格式
 
-结果保存在 `experiments/{stage}/results.json`：
+结果保存在 `outputs/{stage}/results.json`：
 
 ```json
 {

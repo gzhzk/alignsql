@@ -169,5 +169,5 @@ pip install vllm
 ## 相关文件
 
 - `scripts/evaluate_vllm.py` - 评测脚本
-- `scripts/evaluation.py` - Spider 官方评测逻辑
-- `scripts/process_sql.py` - SQL 解析工具
+- `vendor/evaluation.py` - Spider 官方评测逻辑
+- `vendor/process_sql.py` - SQL 解析工具

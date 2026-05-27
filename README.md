@@ -32,6 +32,9 @@ bash scripts/run_zeroshot.sh
 python scripts/prepare_sft.py
 llamafactory-cli train configs/spider/sft.yaml
 bash scripts/run_sft.sh
+
+# Self-Consistency 推理 (N=5)
+bash scripts/run_sc.sh 5
 ```
 
 ## 项目结构
@@ -39,44 +42,41 @@ bash scripts/run_sft.sh
 ```
 ├── alignsql/                      # Python 包 (pip install -e .)
 │   ├── __init__.py
-│   ├── data/
-│   │   ├── __init__.py
+│   ├── data/                      # 数据加载/处理
 │   │   ├── preprocessing.py       # 难度分类、Prompt 构建
-│   │   ├── schema.py              # Schema 序列化 (多格式)
+│   │   ├── schema.py              # Schema 序列化
 │   │   └── spider.py              # Spider 数据加载器
-│   └── utils/
-│       ├── __init__.py
+│   ├── models/                    # 模型训练/推理
+│   │   └── inference.py           # Self-Consistency 推理策略
+│   ├── analysis/                  # 错误分析、消融对比
+│   ├── eval/                      # 评估指标
+│   │   └── metrics.py
+│   └── utils/                     # 工具函数
 │       ├── db.py                  # SQLite 执行工具
 │       └── io.py                  # JSON/JSONL 读写
+├── vendor/                        # 第三方代码 (Spider 官方评测)
+│   ├── evaluation.py
+│   └── process_sql.py
 ├── configs/                       # LLaMA-Factory 训练配置
 │   ├── dataset_info.json
 │   └── spider/
 │       ├── sft.yaml
 │       └── merge_sft.yaml
 ├── scripts/                       # 可执行入口
-│   ├── prepare_sft.py             # SFT 数据预处理 (薄封装)
-│   ├── analyze_difficulty.py      # 难度分布分析 (薄封装)
-│   ├── evaluate_vllm.py           # 推理评测 (vLLM)
-│   ├── evaluation.py              # Spider 官方评估逻辑
-│   ├── process_sql.py             # SQL 解析工具
+│   ├── evaluate_vllm.py           # 推理评测 (支持 SC)
+│   ├── prepare_sft.py
+│   ├── analyze_difficulty.py
 │   ├── run_sft.sh
-│   └── run_zeroshot.sh
+│   ├── run_zeroshot.sh
+│   └── run_sc.sh
 ├── tests/
-│   ├── test_data.py
-│   ├── test_schema.py
-│   └── test_utils.py
-├── experiments/                   # 实验结果
-│   ├── zeroshot/results.json
-│   └── sft/results.json
-├── assets/                        # 实验图表
+├── outputs/
+├── assets/
 │   ├── sft-train-loss.png
 │   ├── sft-eval-loss.png
 │   └── sft-learning-rate.png
-├── docs/                          # 详细文档
-│   └── PLANNING.md
-├── setup.py
-├── Makefile
-└── README.md
+├── docs/
+└── setup.py
 ```
 
 ## 详细方案

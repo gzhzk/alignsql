@@ -39,9 +39,9 @@ dataset/test_database/
 dataset/bird/
 
 # Training outputs
-outputs/
 logs/
 checkpoints/
+data_processed/
 
 # Adapter and merged models
 models/sft/

@@ -83,7 +83,7 @@ AlignSQL/
 │   ├── test_data.py               # 数据层测试
 │   ├── test_schema.py             # Schema 序列化测试
 │   └── test_utils.py              # 工具函数测试
-├── experiments/                   # 实验结果
+├── outputs/                       # 实验结果
 │   ├── zeroshot/results.json
 │   └── sft/results.json
 ├── assets/                        # 实验图表
@@ -105,7 +105,7 @@ alignsql/
 configs/
 ├── bird/                   # BIRD 训练配置
 │
-experiments/
+outputs/
 ├── dpo/                    # DPO 实验结果
 ├── self_consistency/       # Self-Consistency 结果
 ```
@@ -122,7 +122,7 @@ experiments/
 - [x] 抽取公共逻辑（db 工具、schema 序列化、数据加载）
 - [x] 保留 Spider 官方 evaluation.py + process_sql.py
 - [x] 编写 `setup.py` + `Makefile`
-- [x] 迁移现有实验数据到 `experiments/` 目录
+- [x] 迁移现有实验数据到 `outputs/` 目录
 - [x] 补基础测试（data / schema / utils）
 - [x] 配置迁移：`config/` → `configs/spider/`
 

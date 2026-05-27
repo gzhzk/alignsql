@@ -18,7 +18,7 @@ python scripts/evaluate_vllm.py \
     --max_new_tokens 512 \
     --temperature 0 \
     --max_samples -1 \
-    --output_dir experiments
+    --output_dir outputs
 ```
 
 ### 参数说明
@@ -33,7 +33,7 @@ python scripts/evaluate_vllm.py \
 | `--max_new_tokens` | 384 | 最大生成 token 数 |
 | `--temperature` | 0.1 | 生成温度 |
 | `--max_samples` | -1 | 最大样本数，-1 为全部 |
-| `--output_dir` | experiments | 输出目录 |
+| `--output_dir` | outputs | 输出目录 |
 
 ### 评测模式
 
@@ -125,7 +125,7 @@ alignsql/
 │   ├── train.json
 │   ├── tables.json
 │   └── database/              # SQLite 数据库
-└── experiments/              # 评测结果
+└── outputs/                  # 评测结果
     ├── zeroshot/
     │   └── results.json
     └── sft/
@@ -161,9 +161,9 @@ alignsql/
 
 | 实验 | 结果文件 |
 |------|----------|
-| Zero-shot | `experiments/zeroshot/results.json` |
-| SFT | `experiments/sft/results.json` |
-| DPO | `experiments/dpo/results.json` |
+| Zero-shot | `outputs/zeroshot/results.json` |
+| SFT | `outputs/sft/results.json` |
+| DPO | `outputs/dpo/results.json` |
 
 ## 依赖
 

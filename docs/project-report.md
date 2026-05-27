@@ -568,7 +568,7 @@ AlignSQL/
 ├── models/                    # 模型权重输出
 │   ├── sft/                   # SFT adapter 权重
 │   └── dpo/                   # DPO adapter 权重
-├── experiments/                # 实验结果
+├── outputs/                    # 实验结果
 │   ├── zeroshot/              # Zero-shot 结果
 │   │   └── results.json
 │   ├── sft/                  # SFT 结果
@@ -585,27 +585,27 @@ AlignSQL/
 | `prepare_sft.py` | `data/spider/` | `data/sft/` |
 | `generate_candidates.py` | `models/sft/` + `data/spider/` | SFT 模型的候选 SQL |
 | `build_preferences.py` | 候选 SQL + 执行结果 | `data/dpo/` 偏好对 |
-| `evaluate.py` | 模型 + `data/spider/` | `experiments/*/results.json` |
+| `evaluate.py` | 模型 + `data/spider/` | `outputs/*/results.json` |
 
 ### 8.5 三阶段对应
 
 ```
 Phase 1: Zero-shot
     evaluate.py --stage zeroshot
-    → experiments/zeroshot/results.json
+    → outputs/zeroshot/results.json
 
 Phase 2: SFT
     prepare_sft.py              # 数据预处理
     llamafactory-cli train sft.yaml  # 训练
     evaluate.py --stage sft
-    → experiments/sft/results.json
+    → outputs/sft/results.json
 
 Phase 3: DPO
     generate_candidates.py      # 生成候选
     build_preferences.py        # 构建偏好
     llamafactory-cli train dpo.yaml  # 训练
     evaluate.py --stage dpo
-    → experiments/dpo/results.json
+    → outputs/dpo/results.json
 ```
 
 ---
