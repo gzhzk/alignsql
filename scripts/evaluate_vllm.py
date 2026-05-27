@@ -17,9 +17,11 @@ os.environ["OMP_NUM_THREADS"] = "4"
 from tqdm import tqdm
 from vllm import LLM, SamplingParams
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "vendor"))
 from process_sql import get_schema, Schema, get_sql
 from evaluation import Evaluator
+
+from alignsql.models.inference import sample_candidates, execute_and_vote
 
 SYSTEM_PROMPTS = {
     "zeroshot": """You are an expert SQLite SQL generator.
@@ -346,7 +348,8 @@ def print_scores(scores, etype):
 
 def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = "zeroshot",
              max_samples: int = -1, temperature: float = 0.1, max_new_tokens: int = 384,
-             etype: str = "all") -> Tuple[List, Dict]:
+             etype: str = "all",
+             self_consistency: bool = False, n_candidates: int = 5) -> Tuple[List, Dict]:
     spider_path = Path(spider_dir)
     tables_file = spider_path / "tables.json"
     
@@ -422,7 +425,41 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
                 print(f"  gold_parsed FAILED: {e}")
     
     prompts = [build_prompt(item["schema"], item["question"], stage) for item in items]
-    pred_sqls = batch_generate_sql(llm, tokenizer, prompts, max_new_tokens, temperature, stage)
+
+    # ── Self-Consistency or greedy ─────────────────────────
+    if self_consistency:
+        print(f"Mode: Self-Consistency (n={n_candidates}, T={temperature})")
+        candidates = sample_candidates(
+            llm, tokenizer, prompts,
+            n=n_candidates,
+            temperature=temperature,
+            top_p=0.9,
+            max_tokens=max_new_tokens,
+            system_prompt=SYSTEM_PROMPTS[stage],
+            extract_sql_fn=extract_sql,
+            strip_tokens=['<|think|>', '</think|>', '<|reserved_2066|>'],
+        )
+        # Save candidates for DPO reuse
+        cand_records = []
+        for item, cands in zip(items, candidates):
+            cand_records.append({
+                "db_id": item["db_id"],
+                "question": item["question"],
+                "gold_sql": item["gold_sql"],
+                "candidates": cands,
+            })
+        tag = f"sc_n{n_candidates}"
+        cand_path = Path(output_dir).parent / tag / "candidates.json"
+        cand_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cand_path, "w") as f:
+            json.dump(cand_records, f, ensure_ascii=False, indent=2)
+        print(f"Candidates saved to {cand_path}")
+
+        db_paths = [item["db_path"] for item in items]
+        pred_sqls = execute_and_vote(candidates, db_paths)
+    else:
+        print(f"Mode: greedy (temperature=0)")
+        pred_sqls = batch_generate_sql(llm, tokenizer, prompts, max_new_tokens, temperature, stage)
     
     pbar = tqdm(total=len(items), desc="Evaluating")
     
@@ -546,17 +583,26 @@ def main():
     parser.add_argument("--max_samples", type=int, default=-1, help="Max samples to evaluate, -1 for all")
     parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument("--max_new_tokens", type=int, default=384)
-    parser.add_argument("--etype", type=str, default="all", choices=["all", "exec", "match"], 
+    parser.add_argument("--etype", type=str, default="all", choices=["all", "exec", "match"],
                         help="Evaluation type: all, exec, match")
-    parser.add_argument("--output_dir", type=str, default="experiments")
+    parser.add_argument("--output_dir", type=str, default="outputs")
+    parser.add_argument("--self_consistency", action="store_true",
+                        help="Enable Self-Consistency inference")
+    parser.add_argument("--n_candidates", type=int, default=5,
+                        help="Number of candidates per question (SC mode)")
     args = parser.parse_args()
-    
-    output_dir = Path(args.output_dir) / args.stage
+
+    # Output dir: outputs/{stage} (greedy) or outputs/sc_n{N} (SC)
+    if args.self_consistency:
+        output_dir = Path(args.output_dir) / f"sc_n{args.n_candidates}"
+    else:
+        output_dir = Path(args.output_dir) / args.stage
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     results, scores = evaluate(
         args.model_path, args.spider_dir, args.split, args.stage,
-        args.max_samples, args.temperature, args.max_new_tokens, args.etype
+        args.max_samples, args.temperature, args.max_new_tokens, args.etype,
+        self_consistency=args.self_consistency, n_candidates=args.n_candidates,
     )
     
     output_data = {
