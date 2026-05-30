@@ -10,12 +10,14 @@
     }
   },
   "spider_dpo": {
-    "file_name": "dpo_data.json",
+    "file_name": "dpo_data.jsonl",
     "formatting": "alpaca",
+    "ranking": true,
     "columns": {
       "prompt": "instruction",
       "query": "input",
-      "response": "output",
+      "chosen": "chosen",
+      "rejected": "rejected",
       "system": "system"
     }
   },
@@ -30,12 +32,14 @@
     }
   },
   "bird_dpo": {
-    "file_name": "bird_dpo_data.json",
+    "file_name": "bird_dpo_data.jsonl",
     "formatting": "alpaca",
+    "ranking": true,
     "columns": {
       "prompt": "instruction",
       "query": "input",
-      "response": "output",
+      "chosen": "chosen",
+      "rejected": "rejected",
       "system": "system"
     }
   }

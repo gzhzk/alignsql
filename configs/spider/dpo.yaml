@@ -1,0 +1,49 @@
+### model
+model_name_or_path: /root/autodl-tmp/models/sft/merged
+trust_remote_code: true
+
+### method
+stage: dpo
+finetuning_type: lora
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0
+lora_target: all
+
+### dpo specific
+pref_beta: 0.1
+pref_loss: sigmoid
+
+### dataset
+dataset: spider_dpo
+dataset_dir: data
+template: qwen3_nothink
+cutoff_len: 1024
+max_samples: 100000
+overwrite_cache: true
+preprocessing_num_workers: 16
+
+### output
+output_dir: /root/alignsql/models/dpo/qwen3-8b-spider
+logging_steps: 5
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+
+### train
+num_train_epochs: 2.0
+gradient_checkpointing: true
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 8
+learning_rate: 1e-5
+warmup_ratio: 0.1
+lr_scheduler_type: cosine
+max_grad_norm: 1.0
+bf16: true
+flash_attn: auto
+optim: adamw_torch
+ddp_timeout: 180000000
+include_num_input_tokens_seen: true
+
+### wandb
+report_to: wandb

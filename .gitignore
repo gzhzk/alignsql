@@ -42,6 +42,9 @@ dataset/bird/
 logs/
 checkpoints/
 data_processed/
+data/*
+!data/
+!data/dataset_info.json
 
 # Adapter and merged models
 models/sft/

@@ -23,6 +23,7 @@ def sample_candidates(
     system_prompt: str = "",
     extract_sql_fn: Callable[[str], str] = lambda x: x or "",
     strip_tokens: Optional[list[str]] = None,
+    seed: int | None = 42,
 ) -> list[list[str]]:
     """Sample N candidate SQLs per prompt via vLLM.
 
@@ -53,6 +54,8 @@ def sample_candidates(
     strip_tokens : list[str], optional
         Substrings to remove from the formatted chat template
         (e.g. Qwen think tokens ``<|think|>``).
+    seed : int, optional
+        Sampling seed. Use different seeds across rounds to increase diversity.
 
     Returns
     -------
@@ -75,13 +78,15 @@ def sample_candidates(
             text = text.replace(tok, "")
         formatted.append(text)
 
-    params = SamplingParams(
-        temperature=temperature,
-        top_p=top_p,
-        n=n,
-        max_tokens=max_tokens,
-        seed=42,
-    )
+    params_kwargs = {
+        "temperature": temperature,
+        "top_p": top_p,
+        "n": n,
+        "max_tokens": max_tokens,
+    }
+    if seed is not None:
+        params_kwargs["seed"] = seed
+    params = SamplingParams(**params_kwargs)
     outputs = llm.generate(formatted, params, use_tqdm=False)
 
     return [[extract_sql_fn(out.text) for out in o.outputs] for o in outputs]
