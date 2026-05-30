@@ -17,6 +17,7 @@ os.environ["OMP_NUM_THREADS"] = "4"
 from tqdm import tqdm
 from vllm import LLM, SamplingParams
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "vendor"))
 from process_sql import get_schema, Schema, get_sql
 from evaluation import Evaluator
@@ -270,7 +271,7 @@ def batch_generate_sql(llm: LLM, tokenizer, prompts: List[str], max_new_tokens: 
             text = text.replace(tok, '')
         formatted.append(text)
     
-    outputs = llm.generate(formatted, SamplingParams(temperature=temperature, max_tokens=max_new_tokens), use_tqdm=False)
+    outputs = llm.generate(formatted, SamplingParams(temperature=temperature, max_tokens=max_new_tokens, seed=42), use_tqdm=False)
     return [extract_sql(o.outputs[0].text) for o in outputs]
 
 
@@ -349,7 +350,8 @@ def print_scores(scores, etype):
 def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = "zeroshot",
              max_samples: int = -1, temperature: float = 0.1, max_new_tokens: int = 384,
              etype: str = "all",
-             self_consistency: bool = False, n_candidates: int = 5) -> Tuple[List, Dict]:
+             self_consistency: bool = False, n_candidates: int = 5,
+             output_dir: str | Path | None = None) -> Tuple[List, Dict]:
     spider_path = Path(spider_dir)
     tables_file = spider_path / "tables.json"
     
@@ -449,7 +451,7 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
                 "candidates": cands,
             })
         tag = f"sc_n{n_candidates}"
-        cand_path = Path(output_dir).parent / tag / "candidates.json"
+        cand_path = Path(output_dir) / "candidates.json"
         cand_path.parent.mkdir(parents=True, exist_ok=True)
         with open(cand_path, "w") as f:
             json.dump(cand_records, f, ensure_ascii=False, indent=2)
@@ -592,17 +594,17 @@ def main():
                         help="Number of candidates per question (SC mode)")
     args = parser.parse_args()
 
-    # Output dir: outputs/{stage} (greedy) or outputs/sc_n{N} (SC)
+    # Output dir: outputs/{stage}/ (greedy) or outputs/{stage}/sc_n{N}/ (SC)
+    output_dir = Path(args.output_dir) / args.stage
     if args.self_consistency:
-        output_dir = Path(args.output_dir) / f"sc_n{args.n_candidates}"
-    else:
-        output_dir = Path(args.output_dir) / args.stage
+        output_dir = output_dir / f"sc_n{args.n_candidates}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     results, scores = evaluate(
         args.model_path, args.spider_dir, args.split, args.stage,
         args.max_samples, args.temperature, args.max_new_tokens, args.etype,
         self_consistency=args.self_consistency, n_candidates=args.n_candidates,
+        output_dir=output_dir,
     )
     
     output_data = {

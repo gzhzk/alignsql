@@ -6,7 +6,6 @@ Usage
 """
 
 import sqlite3
-import time
 from typing import Any, Callable, Optional
 
 from vllm import LLM, SamplingParams
@@ -81,6 +80,7 @@ def sample_candidates(
         top_p=top_p,
         n=n,
         max_tokens=max_tokens,
+        seed=42,
     )
     outputs = llm.generate(formatted, params, use_tqdm=False)
 
@@ -97,9 +97,11 @@ def execute_and_vote(
     For each question:
       1. Execute every candidate SQL against its database.
       2. Group candidates by their result set (``str(sorted(rows))``).
+         Empty result sets are NOT clustered (each gets its own group) to
+         avoid wrong SQLs forming false majorities.
       3. Discard candidates that raise an execution error.
       4. Select the group with the most members.
-      5. Tie-break by average execution time (faster wins).
+      5. Tie-break by average SQL length (shorter ≈ cleaner).
 
     Parameters
     ----------
@@ -121,23 +123,27 @@ def execute_and_vote(
     voted: list[str] = []
 
     for sqls, db_path in zip(candidates, db_paths):
-        groups: dict[str, list[tuple[str, float]]] = {}
+        groups: dict[str, list[str]] = {}
+        empty_idx = 0
 
         for sql in sqls:
             if not sql:
                 continue
             try:
-                start = time.time()
                 conn = sqlite3.connect(str(db_path), **kwargs)
                 conn.text_factory = str
                 cur = conn.cursor()
                 cur.execute(sql)
                 rows = cur.fetchall()
                 conn.close()
-                elapsed = time.time() - start
 
-                key = str(sorted(rows))
-                groups.setdefault(key, []).append((sql, elapsed))
+                if not rows:
+                    # 空结果集不聚类，每条自成一组，防止错误 SQL 抱团
+                    key = f"_EMPTY_{empty_idx}"
+                    empty_idx += 1
+                else:
+                    key = str(sorted(rows, key=str))
+                groups.setdefault(key, []).append(sql)
             except Exception:
                 continue
 
@@ -145,13 +151,13 @@ def execute_and_vote(
             voted.append(sqls[0] if sqls else "")
             continue
 
-        # Most members first, then fastest average execution time
+        # Most members first, then shortest average SQL length as tie-breaker
         def sort_key(item):
             _key, members = item
-            avg_time = sum(m[1] for m in members) / len(members)
-            return (-len(members), avg_time)
+            avg_len = sum(len(m) for m in members) / len(members)
+            return (-len(members), avg_len)
 
         winner = sorted(groups.items(), key=sort_key)[0]
-        voted.append(winner[1][0][0])  # first SQL of the winning group
+        voted.append(winner[1][0])  # first SQL of the winning group
 
     return voted
