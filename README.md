@@ -11,30 +11,39 @@
 | 阶段 | Spider Dev (EX) | Exact Match | 状态 |
 |------|:---------------:|:-----------:|:----:|
 | Zero-shot (baseline) | 43.91% | 35.69% | ✅ |
-| SFT (LoRA rank=8) | 72.24% | 67.41% | ✅ |
+| SFT (Greedy) | 71.76% | 67.02% | ✅ |
+| SFT + SC-5 | 73.02% | 68.38% | ✅ |
+| SFT + SC-8 | **74.27%** | 68.57% | ✅ |
+| SFT + SC-12 | 74.18% | **68.96%** | ✅ |
 
-### 按难度分级（SFT）
+### 按难度分级
 
-| 难度 | Zero-shot | SFT | 提升 |
-|------|-----------|-----|:----:|
-| easy | 72.18% | 89.11% | +16.93% |
-| medium | 45.96% | 74.44% | +28.48% |
-| hard | 25.86% | 65.52% | +39.66% |
-| extra | 15.06% | 48.19% | +33.13% |
+详见 [Self-Consistency 文档](docs/self-consistency.md)。
 
 ## 快速开始
 
+> ⚠️ **注意**：以下脚本中的模型路径（如 `/root/autodl-tmp/models/...`）为参考路径，请根据实际情况修改。
+
 ```bash
-# Zero-shot 评测
+# Zero-shot 评测（基座模型）
 bash scripts/run_zeroshot.sh
 
 # SFT 训练与评测
 python scripts/prepare_sft.py
 llamafactory-cli train configs/spider/sft.yaml
-bash scripts/run_sft.sh
+bash scripts/run_eval.sh
 
-# Self-Consistency 推理 (N=5)
-bash scripts/run_sc.sh 5
+# Self-Consistency 消融（N=5,8,12）
+bash scripts/run_eval.sh 5   # SC N=5
+bash scripts/run_eval.sh 8   # SC N=8
+bash scripts/run_eval.sh 12  # SC N=12
+```
+
+### 自定义模型路径
+
+```bash
+# 通过 --model_path 指定
+bash scripts/run_eval.sh --model_path /your/path/to/model 5
 ```
 
 ## 项目结构
