@@ -50,3 +50,6 @@ data/*
 models/sft/
 models/dpo/
 models/grpo/
+
+# Config files (use .yaml.example as template)
+configs/**/*.yaml

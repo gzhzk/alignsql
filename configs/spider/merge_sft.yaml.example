@@ -1,0 +1,8 @@
+### model
+model_name_or_path: /path/to/qwen3-8b
+adapter_name_or_path: /path/to/models/sft/adapter
+
+### export
+export_dir: /path/to/models/sft/merged
+export_size: 2
+export_legacy_format: false
