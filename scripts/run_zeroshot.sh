@@ -5,7 +5,7 @@ cd /root/alignsql
 
 python scripts/evaluate_vllm.py \
     --model_path /root/autodl-tmp/models/qwen3-8b \
-    --spider_dir /root/alignsql/dataset \
+    --spider_dir /root/alignsql/dataset/spider \
     --stage zeroshot \
     --split dev \
     --max_samples -1 \

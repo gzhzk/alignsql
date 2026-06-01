@@ -12,7 +12,8 @@
 
 STAGE=sft
 MODEL_PATH=""
-SPIDER_DIR=/root/alignsql/dataset
+SPIDER_DIR=/root/alignsql/dataset/spider
+BIRD_DIR=/root/alignsql/dataset/bird/minidev
 TEMPERATURE=0.8
 MAX_TOKENS=512
 
