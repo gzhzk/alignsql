@@ -3,11 +3,12 @@
 # 默认并行跑 greedy baseline + N=5,8,12 Self-Consistency 消融
 #
 # 用法:
-#   bash scripts/run_eval.sh                         # 默认 sft，Spider 完整消融
-#   bash scripts/run_eval.sh --stage dpo             # DPO 模型，Spider
-#   bash scripts/run_eval.sh --dataset bird          # SFT 模型，BIRD
-#   bash scripts/run_eval.sh --stage dpo --dataset bird 5  # DPO，BIRD，仅 SC N=5
-#   bash scripts/run_eval.sh --model_path /path 5    # 自定义模型路径
+#   bash scripts/run_eval.sh                              # 默认 sft，Spider 完整消融
+#   bash scripts/run_eval.sh --stage dpo                  # DPO 模型，Spider
+#   bash scripts/run_eval.sh --dataset bird               # SFT 模型，BIRD 完整消融
+#   bash scripts/run_eval.sh --dataset bird --greedy      # BIRD 仅跑 greedy
+#   bash scripts/run_eval.sh --stage dpo --dataset bird 5 # DPO，BIRD，仅 SC N=5
+#   bash scripts/run_eval.sh --model_path /path 5         # 自定义模型路径
 #
 # 注: 基座模型 (zeroshot) 评测走 scripts/run_zeroshot.sh
 
@@ -18,6 +19,7 @@ SPIDER_DIR=/root/alignsql/dataset/spider
 BIRD_DIR=/root/alignsql/dataset/bird/minidev
 TEMPERATURE=0.8
 MAX_TOKENS=512
+GREEDY_ONLY=false
 
 # 解析命名参数
 while [[ $# -gt 0 ]]; do
@@ -34,6 +36,10 @@ while [[ $# -gt 0 ]]; do
             MODEL_PATH="$2"
             shift 2
             ;;
+        --greedy)
+            GREEDY_ONLY=true
+            shift
+            ;;
         --spider_dir)
             SPIDER_DIR="$2"
             shift 2
@@ -45,8 +51,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # BIRD 默认路径
-if [ "$DATASET" = "bird" ] && [ "$SPIDER_DIR" = "/root/alignsql/dataset" ]; then
-    SPIDER_DIR="/root/alignsql/dataset/bird/minidev/MINIDEV"
+if [ "$DATASET" = "bird" ]; then
+    SPIDER_DIR="${BIRD_DIR}/MINIDEV"
 fi
 
 # 如果未指定 model_path，按 stage 约定路径
@@ -83,7 +89,10 @@ do_sc() {
         --n_candidates "${N}"
 }
 
-if [ -n "$1" ]; then
+if [ "$GREEDY_ONLY" = true ]; then
+    # 仅跑 greedy baseline
+    do_greedy
+elif [ -n "$1" ]; then
     # 单次运行指定 N 值
     do_sc "$1"
 else
