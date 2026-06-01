@@ -53,14 +53,19 @@ SQL₆ → 执行错误 → 丢弃
 ## 使用方法
 
 ```bash
+# Spider SC
 python scripts/evaluate_vllm.py \
     --model_path <模型路径> \
-    --spider_dir <数据集路径> \
+    --spider_dir dataset/spider \
+    --dataset spider \
     --stage sft \
     --self_consistency \
     --n_candidates 12 \
     --temperature 0.8 \
     --etype all
+
+# BIRD SC（快捷脚本）
+bash scripts/run_eval.sh --dataset bird
 ```
 
 ### 参数说明
@@ -114,10 +119,12 @@ python scripts/evaluate_vllm.py \
 运行 SC 模式后，会生成两个文件：
 
 ```
-outputs/sft/sc_n12/
+outputs/spider/sft/sc_n12/
 ├── results.json    # 最终评测结果
 └── candidates.json # 每个问题的候选 SQL（可用于 DPO 训练）
 ```
+
+同样，BIRD 的 SC 结果在 `outputs/bird/sft/sc_n{N}/`。
 
 ### candidates.json 结构
 
