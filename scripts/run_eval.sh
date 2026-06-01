@@ -20,6 +20,7 @@ BIRD_DIR=/root/alignsql/dataset/bird/minidev
 TEMPERATURE=0.8
 MAX_TOKENS=512
 GREEDY_ONLY=false
+NO_EVIDENCE=""
 
 # 解析命名参数
 while [[ $# -gt 0 ]]; do
@@ -35,6 +36,10 @@ while [[ $# -gt 0 ]]; do
         --model_path)
             MODEL_PATH="$2"
             shift 2
+            ;;
+        --no_evidence)
+            NO_EVIDENCE="--no_evidence"
+            shift
             ;;
         --greedy)
             GREEDY_ONLY=true
@@ -70,7 +75,8 @@ do_greedy() {
         --stage "${STAGE}" \
         --dataset "${DATASET}" \
         --temperature 0 \
-        --max_new_tokens "${MAX_TOKENS}"
+        --max_new_tokens "${MAX_TOKENS}" \
+        ${NO_EVIDENCE:+$NO_EVIDENCE}
 }
 
 do_sc() {
@@ -86,7 +92,8 @@ do_sc() {
         --temperature "${TEMPERATURE}" \
         --max_new_tokens "${MAX_TOKENS}" \
         --self_consistency \
-        --n_candidates "${N}"
+        --n_candidates "${N}" \
+        ${NO_EVIDENCE:+$NO_EVIDENCE}
 }
 
 if [ "$GREEDY_ONLY" = true ]; then

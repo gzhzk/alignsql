@@ -58,8 +58,8 @@ SQL_KEYWORDS = ("SELECT", "WITH", "INSERT", "UPDATE", "DELETE")
 TASK_INSTRUCTION = "Convert the following question to a SQL query based on the database schema."
 
 
-def build_prompt(schema_str: str, question: str, stage: str, evidence: str = "") -> str:
-    evidence_section = f"\nEvidence: {evidence}\n" if evidence else ""
+def build_prompt(schema_str: str, question: str, stage: str, evidence: str = "", no_evidence: bool = False) -> str:
+    evidence_section = f"\nEvidence: {evidence}\n" if evidence and not no_evidence else ""
 
     if stage == "sft":
         return f"""{TASK_INSTRUCTION}
@@ -363,7 +363,7 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
              etype: str = "all",
              self_consistency: bool = False, n_candidates: int = 5,
              output_dir: str | Path | None = None,
-             dataset: str = "spider") -> Tuple[List, Dict]:
+             dataset: str = "spider", no_evidence: bool = False) -> Tuple[List, Dict]:
     spider_path = Path(spider_dir)
     is_bird = dataset == "bird"
 
@@ -451,7 +451,7 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
             except Exception as e:
                 print(f"  gold_parsed FAILED: {e}")
     
-    prompts = [build_prompt(item["schema"], item["question"], stage, item.get("evidence", "")) for item in items]
+    prompts = [build_prompt(item["schema"], item["question"], stage, item.get("evidence", ""), no_evidence) for item in items]
 
     # ── Self-Consistency or greedy ─────────────────────────
     if self_consistency:
@@ -525,6 +525,8 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
         hardness = "unknown"
         if is_bird:
             hardness = item.get("difficulty", "easy")
+            result["hardness"] = hardness
+            scores[hardness]["count"] += 1
         elif gold_parsed is not None:
             hardness = evaluator.eval_hardness(gold_parsed)
             result["hardness"] = hardness
@@ -621,6 +623,8 @@ def main():
                         help="Enable Self-Consistency inference")
     parser.add_argument("--n_candidates", type=int, default=5,
                         help="Number of candidates per question (SC mode)")
+    parser.add_argument("--no_evidence", action="store_true",
+                        help="Skip evidence in prompt (BIRD only)")
     args = parser.parse_args()
 
     # Output dir: outputs/{dataset}/{stage}/ or .../sc_n{N}/
@@ -633,7 +637,7 @@ def main():
         args.model_path, args.spider_dir, args.split, args.stage,
         args.max_samples, args.temperature, args.max_new_tokens, args.etype,
         self_consistency=args.self_consistency, n_candidates=args.n_candidates,
-        output_dir=output_dir, dataset=args.dataset,
+        output_dir=output_dir, dataset=args.dataset, no_evidence=args.no_evidence,
     )
     
     output_data = {
