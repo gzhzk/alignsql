@@ -31,9 +31,11 @@ Thumbs.db
 # Wandb
 wandb/
 
-# Spider Database (downloaded separately)
-dataset/database/
-dataset/test_database/
+# Dataset
+dataset/
+
+# Spider Dataset (downloaded separately)
+dataset/spider/
 
 # BIRD Dataset (downloaded separately)
 dataset/bird/
