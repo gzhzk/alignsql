@@ -83,8 +83,9 @@ Question: {question}
         return base + "SQL Query:"
 
 
-def load_schema(spider_dir: Path, db_id: str, stage: str = "zeroshot") -> str:
-    tables_file = spider_dir / "tables.json"
+def load_schema(spider_dir: Path, db_id: str, stage: str = "zeroshot", dataset: str = "spider") -> str:
+    tables_filename = "dev_tables.json" if dataset == "bird" else "tables.json"
+    tables_file = spider_dir / tables_filename
     with open(tables_file, "r", encoding="utf-8") as f:
         tables_data = json.load(f)
 
@@ -418,7 +419,7 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
             "question": item["question"],
             "gold_sql": item.get("SQL", item.get("query", "")),
             "db_path": str(db_path) if has_db else "",
-            "schema": load_schema(spider_path, db_id, stage),
+            "schema": load_schema(spider_path, db_id, stage, dataset),
             "has_db": has_db,
         }
         if is_bird:
