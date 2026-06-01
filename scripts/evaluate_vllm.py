@@ -144,7 +144,14 @@ def load_schema(spider_dir: Path, db_id: str, stage: str = "zeroshot", dataset: 
 
     # Structured format with column types (zeroshot / dpo)
     column_types = db_schema["column_types"]
-    primary_keys_set = set(primary_keys)
+    # Flatten composite keys (BIRD uses lists for composite PKs)
+    primary_keys_flat = []
+    for pk in primary_keys:
+        if isinstance(pk, list):
+            primary_keys_flat.extend(pk)
+        else:
+            primary_keys_flat.append(pk)
+    primary_keys_set = set(primary_keys_flat)
 
     schema_parts = []
     for table_idx, table_name in enumerate(table_names):
