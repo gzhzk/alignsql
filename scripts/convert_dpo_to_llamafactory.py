@@ -17,11 +17,31 @@ import json
 from pathlib import Path
 
 
-def convert(input_path: str, output_path: str) -> None:
+def convert(
+    input_path: str,
+    output_path: str,
+    require_chosen_gold: bool = False,
+    drop_identical: bool = False,
+) -> None:
     with open(input_path) as f:
         data = json.load(f)
 
     print(f"Loaded {len(data)} pairs from {input_path}")
+    if require_chosen_gold:
+        before = len(data)
+        data = [
+            item for item in data
+            if item["chosen"].strip() == item.get("gold_sql", "").strip()
+        ]
+        print(f"Kept {len(data)} gold-chosen pairs ({before - len(data)} dropped)")
+
+    if drop_identical:
+        before = len(data)
+        data = [
+            item for item in data
+            if item["chosen"].strip().lower() != item["rejected"].strip().lower()
+        ]
+        print(f"Kept {len(data)} non-identical pairs ({before - len(data)} dropped)")
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -63,8 +83,17 @@ def main():
                         help="Input from prepare_dpo.py")
     parser.add_argument("--output", type=str, default="data_processed/dpo_data.jsonl",
                         help="Output for LLaMA-Factory (.jsonl)")
+    parser.add_argument("--require_chosen_gold", action="store_true",
+                        help="Keep only pairs whose chosen SQL exactly matches gold_sql")
+    parser.add_argument("--drop_identical", action="store_true",
+                        help="Drop pairs whose chosen and rejected SQL are identical")
     args = parser.parse_args()
-    convert(args.input, args.output)
+    convert(
+        args.input,
+        args.output,
+        require_chosen_gold=args.require_chosen_gold,
+        drop_identical=args.drop_identical,
+    )
 
 
 if __name__ == "__main__":

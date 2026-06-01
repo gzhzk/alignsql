@@ -21,6 +21,18 @@
       "system": "system"
     }
   },
+  "spider_dpo_gold": {
+    "file_name": "../data_processed/dpo_data_gold_only.jsonl",
+    "formatting": "alpaca",
+    "ranking": true,
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "chosen": "chosen",
+      "rejected": "rejected",
+      "system": "system"
+    }
+  },
   "bird_sft": {
     "file_name": "bird_sft_data.json",
     "formatting": "alpaca",

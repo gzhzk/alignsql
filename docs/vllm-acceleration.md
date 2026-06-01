@@ -109,8 +109,8 @@ for sql, gold_sql in zip(sqls, gold_sqls):
 | 阶段 | Prompt 特点 |
 |------|-------------|
 | **zeroshot** | 纯基座模型能力，需要明确规则约束输出 |
-| **sft** | 训练过的模型，Prompt 更简洁 |
-| **dpo** | 偏好对齐后，Prompt 进一步优化 |
+| **sft** | 训练过的模型，使用监督微调时的 Prompt |
+| **dpo** | 偏好对齐后的模型，沿用 SFT Prompt 以保证可比性 |
 
 ```python
 SYSTEM_PROMPTS = {
@@ -122,17 +122,13 @@ CRITICAL RULES:
 4. Start directly with SELECT, WITH, INSERT, UPDATE, or DELETE
 5. End with a semicolon""",
 
-    "sft": """You are an expert SQLite SQL generator.
-Given the database schema and question, output the correct SQL query.
-CRITICAL RULES:
-1. Output ONLY the raw SQL query - no markdown, no explanation
-2. Start with SELECT/WITH/INSERT/UPDATE/DELETE, end with semicolon
-3. Always use table_name.column_name when column name may be ambiguous""",
+    "sft": """I want you to act as a SQL terminal in front of an example database,
+you need only to return the sql command to me.
+Below is an instruction that describes a task, Write a response that appropriately completes the request.""",
 
-    "dpo": """Given the database schema and question, generate the correct SQL query.
-Reminder:
-- Output only raw SQL, no markdown or explanation
-- Use table_name.column_name for disambiguation when needed""",
+    "dpo": """I want you to act as a SQL terminal in front of an example database,
+you need only to return the sql command to me.
+Below is an instruction that describes a task, Write a response that appropriately completes the request.""",
 }
 ```
 

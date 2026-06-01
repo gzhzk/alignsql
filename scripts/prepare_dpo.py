@@ -59,13 +59,9 @@ Now generate the SQL query.""",
 you need only to return the sql command to me.
 Below is an instruction that describes a task, Write a response that appropriately completes the request.""",
 
-    "dpo": """Given the database schema and question, generate the correct SQL query.
-
-Reminder:
-- Output only raw SQL, no markdown or explanation
-- Start with SELECT/WITH/INSERT/UPDATE/DELETE
-- End with semicolon
-- Use table_name.column_name for disambiguation when needed""",
+    "dpo": """I want you to act as a SQL terminal in front of an example database,
+you need only to return the sql command to me.
+Below is an instruction that describes a task, Write a response that appropriately completes the request.""",
 }
 
 SQL_KEYWORDS = ("SELECT", "WITH", "INSERT", "UPDATE", "DELETE")
@@ -74,8 +70,12 @@ TASK_INSTRUCTION = "Convert the following question to a SQL query based on the d
 # ── 辅助函数（与 evaluate_vllm.py 保持一致）──────────────────────
 
 
+def prompt_format(stage: str) -> str:
+    return "zeroshot" if stage == "zeroshot" else "sft"
+
+
 def build_prompt(schema_str: str, question: str, stage: str) -> str:
-    if stage == "sft":
+    if prompt_format(stage) == "sft":
         return f"""{TASK_INSTRUCTION}
 
 ###Input:
@@ -91,10 +91,7 @@ Question: {question}
 Question: {question}
 
 """
-    if stage == "dpo":
-        return base + "SQL:"
-    else:
-        return base + "SQL Query:"
+    return base + "SQL Query:"
 
 
 def load_schema(spider_dir: Path, db_id: str, stage: str = "zeroshot") -> str:
@@ -116,7 +113,7 @@ def load_schema(spider_dir: Path, db_id: str, stage: str = "zeroshot") -> str:
     primary_keys = db_schema.get("primary_keys", [])
     foreign_keys = db_schema.get("foreign_keys", [])
 
-    if stage == "sft":
+    if prompt_format(stage) == "sft":
         schema_parts = []
         for table_idx, table_name in enumerate(table_names):
             cols = []
