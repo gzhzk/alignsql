@@ -58,20 +58,22 @@ SQL_KEYWORDS = ("SELECT", "WITH", "INSERT", "UPDATE", "DELETE")
 TASK_INSTRUCTION = "Convert the following question to a SQL query based on the database schema."
 
 
-def build_prompt(schema_str: str, question: str, stage: str) -> str:
+def build_prompt(schema_str: str, question: str, stage: str, evidence: str = "") -> str:
+    evidence_section = f"\nEvidence: {evidence}\n" if evidence else ""
+
     if stage == "sft":
         return f"""{TASK_INSTRUCTION}
 
 ###Input:
 {schema_str}
-
+{evidence_section}
 Question: {question}
 
 ###Response:"""
 
     base = f"""Database Schema:
 {schema_str}
-
+{evidence_section}
 Question: {question}
 
 """
@@ -347,26 +349,44 @@ def print_scores(scores, etype):
             print("{:20} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f}".format(type_, *this_scores))
 
 
+BIRD_DIFFICULTY_MAP = {
+    "simple": "easy",
+    "moderate": "medium",
+    "challenging": "hard",
+    "catastrophic": "extra",
+}
+
+
 def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = "zeroshot",
              max_samples: int = -1, temperature: float = 0.1, max_new_tokens: int = 384,
              etype: str = "all",
              self_consistency: bool = False, n_candidates: int = 5,
-             output_dir: str | Path | None = None) -> Tuple[List, Dict]:
+             output_dir: str | Path | None = None,
+             dataset: str = "spider") -> Tuple[List, Dict]:
     spider_path = Path(spider_dir)
-    tables_file = spider_path / "tables.json"
-    
-    with open(spider_path / f"{split}.json", "r") as f:
+    is_bird = dataset == "bird"
+
+    # BIRD 与 Spider 的文件名差异
+    tables_filename = "dev_tables.json" if is_bird else "tables.json"
+    db_dirname = "dev_databases" if is_bird else "database"
+
+    tables_file = spider_path / tables_filename
+    question_file = spider_path / f"{split}.json"
+    if is_bird:
+        question_file = spider_path / "mini_dev_sqlite.json"
+
+    with open(question_file, "r") as f:
         data = json.load(f)
-    
+
     with open(tables_file, "r") as f:
         tables_data = json.load(f)
-    
+
     db_schemas = {db["db_id"]: db for db in tables_data}
     db_schema_objs = {}
     found_dbs = 0
     for db_id in db_schemas:
-        db_path = spider_path / "database" / db_id / f"{db_id}.sqlite"
-        
+        db_path = spider_path / db_dirname / db_id / f"{db_id}.sqlite"
+
         if db_path.exists():
             try:
                 schema = get_schema(str(db_path))
@@ -374,33 +394,37 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
                 found_dbs += 1
             except Exception as e:
                 print(f"Warning: Failed to load schema for {db_id}: {e}")
-    
-    print(f"Found {found_dbs} databases out of {len(db_schemas)}")
+
+    print(f"Dataset: {dataset}, Found {found_dbs} databases out of {len(db_schemas)}")
     if found_dbs == 0:
-        print("ERROR: No databases found! Check dataset/database/ directory")
-    
+        print("ERROR: No databases found! Check dataset directory")
+
     if max_samples > 0:
         data = data[:max_samples]
-    
+
     llm, tokenizer = load_model(model_path)
-    
+
     items = []
     for item in data:
         db_id = item["db_id"]
-        db_path = spider_path / "database" / db_id / f"{db_id}.sqlite"
-        
+        db_path = spider_path / db_dirname / db_id / f"{db_id}.sqlite"
+
         if db_id not in db_schemas:
             continue
-        
+
         has_db = db_path.exists()
-        items.append({
+        item_data = {
             "db_id": db_id,
             "question": item["question"],
-            "gold_sql": item["query"],
+            "gold_sql": item.get("SQL", item.get("query", "")),
             "db_path": str(db_path) if has_db else "",
             "schema": load_schema(spider_path, db_id, stage),
             "has_db": has_db,
-        })
+        }
+        if is_bird:
+            item_data["evidence"] = item.get("evidence", "")
+            item_data["difficulty"] = BIRD_DIFFICULTY_MAP.get(item.get("difficulty", ""), "easy")
+        items.append(item_data)
     
     evaluator = Evaluator()
     scores = init_scores()
@@ -426,7 +450,7 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
             except Exception as e:
                 print(f"  gold_parsed FAILED: {e}")
     
-    prompts = [build_prompt(item["schema"], item["question"], stage) for item in items]
+    prompts = [build_prompt(item["schema"], item["question"], stage, item.get("evidence", "")) for item in items]
 
     # ── Self-Consistency or greedy ─────────────────────────
     if self_consistency:
@@ -498,7 +522,9 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
                 pass
         
         hardness = "unknown"
-        if gold_parsed is not None:
+        if is_bird:
+            hardness = item.get("difficulty", "easy")
+        elif gold_parsed is not None:
             hardness = evaluator.eval_hardness(gold_parsed)
             result["hardness"] = hardness
             scores[hardness]["count"] += 1
@@ -577,10 +603,12 @@ def evaluate(model_path: str, spider_dir: str, split: str = "dev", stage: str = 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Spider Evaluation with vLLM")
+    parser = argparse.ArgumentParser(description="Spider/BIRD Evaluation with vLLM")
     parser.add_argument("--model_path", type=str, required=True, help="Path to model")
-    parser.add_argument("--spider_dir", type=str, required=True, help="Path to Spider dataset")
+    parser.add_argument("--spider_dir", type=str, required=True, help="Path to dataset")
     parser.add_argument("--stage", type=str, default="zeroshot", choices=["zeroshot", "sft", "dpo"])
+    parser.add_argument("--dataset", type=str, default="spider", choices=["spider", "bird"],
+                        help="Dataset: spider or bird")
     parser.add_argument("--split", type=str, default="dev", choices=["dev", "train"])
     parser.add_argument("--max_samples", type=int, default=-1, help="Max samples to evaluate, -1 for all")
     parser.add_argument("--temperature", type=float, default=0.1)
@@ -594,8 +622,8 @@ def main():
                         help="Number of candidates per question (SC mode)")
     args = parser.parse_args()
 
-    # Output dir: outputs/{stage}/ (greedy) or outputs/{stage}/sc_n{N}/ (SC)
-    output_dir = Path(args.output_dir) / args.stage
+    # Output dir: outputs/{dataset}/{stage}/ or .../sc_n{N}/
+    output_dir = Path(args.output_dir) / args.dataset / args.stage
     if args.self_consistency:
         output_dir = output_dir / f"sc_n{args.n_candidates}"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -604,12 +632,13 @@ def main():
         args.model_path, args.spider_dir, args.split, args.stage,
         args.max_samples, args.temperature, args.max_new_tokens, args.etype,
         self_consistency=args.self_consistency, n_candidates=args.n_candidates,
-        output_dir=output_dir,
+        output_dir=output_dir, dataset=args.dataset,
     )
     
     output_data = {
         "etype": args.etype,
         "stage": args.stage,
+        "dataset": args.dataset,
         "split": args.split,
         "scores": {
             level: {

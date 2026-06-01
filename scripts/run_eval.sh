@@ -3,14 +3,16 @@
 # 默认并行跑 greedy baseline + N=5,8,12 Self-Consistency 消融
 #
 # 用法:
-#   bash scripts/run_eval.sh                         # 默认 sft，完整消融
-#   bash scripts/run_eval.sh --stage dpo             # dpo 模型，完整消融
-#   bash scripts/run_eval.sh --stage dpo 5           # 仅跑 SC N=5
+#   bash scripts/run_eval.sh                         # 默认 sft，Spider 完整消融
+#   bash scripts/run_eval.sh --stage dpo             # DPO 模型，Spider
+#   bash scripts/run_eval.sh --dataset bird          # SFT 模型，BIRD
+#   bash scripts/run_eval.sh --stage dpo --dataset bird 5  # DPO，BIRD，仅 SC N=5
 #   bash scripts/run_eval.sh --model_path /path 5    # 自定义模型路径
 #
 # 注: 基座模型 (zeroshot) 评测走 scripts/run_zeroshot.sh
 
 STAGE=sft
+DATASET=spider
 MODEL_PATH=""
 SPIDER_DIR=/root/alignsql/dataset/spider
 BIRD_DIR=/root/alignsql/dataset/bird/minidev
@@ -22,6 +24,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --stage)
             STAGE="$2"
+            shift 2
+            ;;
+        --dataset)
+            DATASET="$2"
             shift 2
             ;;
         --model_path)
@@ -38,6 +44,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# BIRD 默认路径
+if [ "$DATASET" = "bird" ] && [ "$SPIDER_DIR" = "/root/alignsql/dataset" ]; then
+    SPIDER_DIR="/root/alignsql/dataset/bird/minidev/MINIDEV"
+fi
+
 # 如果未指定 model_path，按 stage 约定路径
 if [ -z "$MODEL_PATH" ]; then
     MODEL_PATH="/root/autodl-tmp/models/${STAGE}/merged"
@@ -45,12 +56,13 @@ fi
 
 do_greedy() {
     echo "========================================"
-    echo "  Greedy Baseline (${STAGE})"
+    echo "  Greedy Baseline (${STAGE}, ${DATASET})"
     echo "========================================"
     python scripts/evaluate_vllm.py \
         --model_path "${MODEL_PATH}" \
         --spider_dir "${SPIDER_DIR}" \
         --stage "${STAGE}" \
+        --dataset "${DATASET}" \
         --temperature 0 \
         --max_new_tokens "${MAX_TOKENS}"
 }
@@ -58,12 +70,13 @@ do_greedy() {
 do_sc() {
     local N=$1
     echo "========================================"
-    echo "  Self-Consistency N=${N} (${STAGE})"
+    echo "  Self-Consistency N=${N} (${STAGE}, ${DATASET})"
     echo "========================================"
     python scripts/evaluate_vllm.py \
         --model_path "${MODEL_PATH}" \
         --spider_dir "${SPIDER_DIR}" \
         --stage "${STAGE}" \
+        --dataset "${DATASET}" \
         --temperature "${TEMPERATURE}" \
         --max_new_tokens "${MAX_TOKENS}" \
         --self_consistency \
@@ -84,8 +97,10 @@ else
 
     echo ""
     echo "=========== 结果汇总 ==========="
-    echo "Greedy:  $(grep -oP '"exec": \K[0-9.]+' "outputs/${STAGE}/results.json" | tail -1)"
+    echo "Dataset: ${DATASET}, Stage: ${STAGE}"
+    OUTDIR="outputs/${DATASET}/${STAGE}"
+    echo "Greedy:  $(grep -oP '"exec": \K[0-9.]+' "${OUTDIR}/results.json" | tail -1)"
     for N in 5 8 12; do
-        echo "SC N=${N}: $(grep -oP '"exec": \K[0-9.]+' "outputs/${STAGE}/sc_n${N}/results.json" | tail -1)"
+        echo "SC N=${N}: $(grep -oP '"exec": \K[0-9.]+' "${OUTDIR}/sc_n${N}/results.json" | tail -1)"
     done
 fi

@@ -6,7 +6,7 @@ Usage:
         --spider_dir dataset --output data_processed/dpo_pairs.json
 
     # 利用已有的 SC 候选（跳过模型加载，只做执行对比）
-    python scripts/prepare_dpo.py --candidates_file outputs/sft/sc_n8/candidates.json \\
+    python scripts/prepare_dpo.py --candidates_file outputs/spider/sft/sc_n8/candidates.json \\
         --spider_dir dataset --output data_processed/dpo_pairs.json
 
     # 快速测试
