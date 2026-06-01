@@ -9,7 +9,7 @@ LLaMA-Factory 要求:
 用法:
     python scripts/convert_dpo_to_llamafactory.py \
         --input data_processed/dpo_pairs.json \
-        --output data/dpo_data.jsonl
+        --output data_processed/dpo_data.jsonl
 """
 
 import argparse
@@ -61,7 +61,7 @@ def main():
     parser = argparse.ArgumentParser(description="Convert DPO pairs to LLaMA-Factory format")
     parser.add_argument("--input", type=str, default="data_processed/dpo_pairs.json",
                         help="Input from prepare_dpo.py")
-    parser.add_argument("--output", type=str, default="data/dpo_data.jsonl",
+    parser.add_argument("--output", type=str, default="data_processed/dpo_data.jsonl",
                         help="Output for LLaMA-Factory (.jsonl)")
     args = parser.parse_args()
     convert(args.input, args.output)
