@@ -10,7 +10,7 @@
     }
   },
   "spider_dpo": {
-    "file_name": "dpo_data.jsonl",
+    "file_name": "../data_processed/dpo_data.jsonl",
     "formatting": "alpaca",
     "ranking": true,
     "columns": {

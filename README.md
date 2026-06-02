@@ -46,6 +46,30 @@ bash scripts/run_eval.sh 12  # SC N=12
 bash scripts/run_eval.sh --model_path /your/path/to/model 5
 ```
 
+## 经验教训
+
+> 以下问题均源于真实踩坑，记录以供后续参考。
+
+### DPO 数据质量是首要问题
+
+首轮 DPO 训练后，Spider EX 仅 71.95%（SFT baseline 71.76%），几乎没有提升。事后分析发现：
+- **35% 的 preference pair 中 `chosen != gold_sql`** ——模型在偏好错误的 SQL，而非 gold SQL。根因是 `prepare_dpo.py` 将 SFT 正确预测也加入了 chosen，这些预测在 EX 上正确但可能与 gold SQL 字面不同。
+- **103 对 chosen / rejected 完全一致** ——模型从中学不到任何偏好信号。
+
+教训：DPO 训练前必须检查数据质量，至少验证 `chosen==gold_sql` 的比例和 chosen/rejected 的 divergence。
+
+### 优先用干净数据验证方法可行性
+
+不应直接投入完整（可能含噪的）数据训练。先过滤出 gold-only pairs 跑一轮小实验，确认 DPO 在理想数据上有效，再逐步放开数据范围。
+
+### 训练指标不能替代数据检查
+
+首轮 DPO 训练中 `reward_accuracy` 等指标表现正常，并未提示数据有问题。但事后检查才发现 35% 的 pair `chosen != gold_sql`。**训练指标不反映「偏好是否正确」，只反映「偏好是否被优化」**——数据质量必须直接 inspect，不能靠汇总指标间接判断。
+
+### Prompt 一致性
+
+DPO 训练和评测使用不同 prompt 格式会导致分数虚低。虽然本次测试证明 prompt 不一致不是主因（SFT prompt 下 DPO 仍无提升），但仍需作为常规检查项。
+
 ## 项目结构
 
 ```
