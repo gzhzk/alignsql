@@ -57,17 +57,17 @@ python scripts/prepare_dpo.py \
 llamafactory-cli train configs/spider/dpo.yaml
 
 # DPO 评测
-bash scripts/run_eval.sh --model_path /root/autodl-tmp/models/dpo/merged
-bash scripts/run_eval.sh --model_path /root/autodl-tmp/models/dpo/merged 5
-bash scripts/run_eval.sh --model_path /root/autodl-tmp/models/dpo/merged 8
-bash scripts/run_eval.sh --model_path /root/autodl-tmp/models/dpo/merged 12
+bash scripts/run_eval.sh --model dpo
+bash scripts/run_eval.sh --model dpo 5
+bash scripts/run_eval.sh --model dpo 8
+bash scripts/run_eval.sh --model dpo 12
 ```
 
 ### 自定义模型路径
 
 ```bash
-# 通过 --model_path 指定
-bash scripts/run_eval.sh --model_path /your/path/to/model 5
+# 通过 --model_path 指定；--model 决定 prompt/stage
+bash scripts/run_eval.sh --model dpo --model_path /your/path/to/model 5
 ```
 
 ## 实验分析

@@ -12,8 +12,9 @@
 | Spider SC | ✅ 完成 | SC-12: EX 74.2%, EM 69.0% |
 | Spider DPO | ✅ 完成 | Greedy EX 74.0%, SC-12: EX 75.0% |
 | Error Analysis | ✅ 完成 | 错误类型分类、Oracle 分析 |
-| **BIRD 泛化** | **❌ 失败** | **直接使用 Spider 模型跑 BIRD 泛化极差** |
-| Learned Selector | 🔄 探索中 | Candidate Oracle 80.6%, 有空间但未完整验证 |
+| Candidate Oracle | ✅ 完成 | SFT+DPO 候选池上界 80.95% |
+| Learned Selector | 🔄 探索中 | 有空间但未完整验证 |
+| 跨数据集迁移 | 暂缓 | 需在目标数据集重新走完整 SFT → DPO 流程 |
 
 ### 各阶段实验结果
 
@@ -29,23 +30,23 @@
 
 ## 二、关键发现
 
-### BIRD 泛化失败
+### 跨数据集迁移暂缓
 
-尝试直接用 Spider SFT 模型跑 BIRD dev，结果远低于预期。分析原因：
+早期尝试直接用 Spider SFT 模型迁移到更复杂数据集时效果不理想。分析原因：
 
 | 问题 | 说明 |
 |------|------|
-| **Schema 差异大** | BIRD 的 database/schema 规模远超 Spider，最大单表数十列，prompt 截断严重 |
-| **领域偏移** | 金融、医疗等专业领域，Spider 的学术场景数据无法覆盖 |
-| **SQL 复杂度** | BIRD 的查询更长、嵌套更深，Spider 训练数据中罕见此类模式 |
-| **评估标准不同** | BIRD 使用 VES（Value Exactness），与 Spider 的 EX/EM 不同 |
+| **Schema 差异大** | 不同数据集的 database/schema 规模、列名风格和外键结构差异明显 |
+| **领域偏移** | 学术场景训练数据难以覆盖金融、医疗等专业领域 |
+| **SQL 复杂度** | 更复杂数据集的查询更长、嵌套更深，Spider 训练数据覆盖不足 |
+| **评估标准不同** | 不同 benchmark 的执行标准和数据分布存在差异 |
 
-**教训**：NL2SQL 的泛化极度依赖训练数据的覆盖。Spider 上训练的能力不能直接迁移到 BIRD。正确的做法是：**在 BIRD 上走完全同样的 SFT → DPO 流程**，Spider pipeline 验证的是链路设计合理性，而不是训练出一个通用模型。
+**教训**：NL2SQL 的泛化极度依赖训练数据覆盖。Spider pipeline 验证的是 post-training 链路设计合理性，而不是训练出一个直接跨 benchmark 泛化的通用模型。迁移到新数据集时，应在目标数据集上重新走完整 SFT → SC → DPO 流程。
 
 ### DPO 数据质量教训
 
 首轮 DPO 训练几乎无提升（71.95% vs 71.76%），事后排查发现：
-- 35% 的 preference pair 中 `chosen != gold_sql`
+- sampled-correct chosen 未充分门控，存在偶然正确风险
 - 103 对 chosen/rejected 完全一致
 
 **教训**：训练指标不反映数据质量，数据必须直接 inspect。
@@ -57,7 +58,7 @@
 | 候选池 / Selector | Spider Dev (EX) | 说明 |
 |-------------------|:---------------:|------|
 | DPO + SC-12 | 75.0% | 当前实际选择结果 |
-| SFT + DPO Candidate Oracle | **80.6%** | 多 policy 候选池分析上界 |
+| SFT + DPO Candidate Oracle | **80.95%** | 多 policy 候选池分析上界 |
 
 Oracle 结果说明正确 SQL 已经出现在候选池中，瓶颈正从「候选生成」转向「候选选择」。这是后续最有希望的方向。
 
@@ -98,7 +99,7 @@ DPO 训练
 - [x] 候选采样（多温度、多轮次）
 - [x] SQL 质量过滤（防噪声污染）
 - [x] 执行对比 + 错误分类（13 类本地错误）
-- [x] local hard-negative 策略（chosen = gold SQL）
+- [x] local hard-negative 策略（gold chosen 为主，门控 sampled-correct 为辅）
 - [x] 变异负样本（规则生成）
 - [x] 错误类型平衡
 - [x] LLaMA-Factory DPO 训练配置
@@ -115,28 +116,28 @@ DPO 训练
 
 ### Phase 1：候选选择（最优先）
 
-Candidate Oracle 80.6% vs 当前 75.0%，有 ~5.6% 的 gap 来自选择环节。
+Candidate Oracle 80.95% vs 当前 75.0%，有约 6% 的 gap 来自选择环节。
 
 可选方向：
-- **规则 selector**：基于执行结果的启发式选择（已初步实验，75.8%）
 - **轻量 learned selector**：用小模型对候选 SQL 打分（对训练数据要求高）
-- **Execution-aware reranker**：边执行边剪枝
+- **Execution-aware verifier/reranker**：结合执行结果、schema 合法性和问题-SQL 对齐进行选择
 
 ### Phase 2：SFT/DPO 融合
 
-DPO 在 extra 难度提升 +5.4%，但在 easy 略有下降。探索融合策略：
-- 多 checkpoint 集成
-- SFT + DPO 联合解码
+DPO 在 extra 难度提升明显，但仍有少量 SFT-to-DPO regression。探索更深层的融合策略：
+- conservative DPO / FTX 正则，保留 SFT 的 schema-grounded 稳定性
+- anti-regression DPO，用训练集上的 SFT 正确、DPO 错误案例构造修复偏好
+- 将 SFT 作为 reference/anchor，而不是简单做推理时双模型 ensemble
 
 ### Phase 3：新数据集完整复现
 
-将 Spider pipeline 迁移到新数据集（如 BIRD）时，需**从头训练完整流程**：
+将 Spider pipeline 迁移到新数据集时，需**从头训练完整流程**：
 
 ```
-BIRD 数据
-  → BIRD SFT （不是用 Spider 模型直接跑）
-  → BIRD SC 消融
-  → BIRD DPO
+目标数据集
+  → SFT
+  → SC 消融
+  → DPO
   → 评估
 ```
 

@@ -8,7 +8,7 @@ DPO 训练的目标是让模型学会**偏好正确的 SQL 生成行为**。核�
 
 1. 用 SFT 模型对每条训练问题采样多个候选 SQL
 2. 通过执行对比，识别哪些候选是错误的（rejected）
-3. 用 gold SQL 作为 chosen，构造 preference pairs
+3. 以 gold SQL 为主要 chosen，并补充通过质量门控的执行正确候选
 4. 按错误类型平衡数据，训练模型学会避开常见错误模式
 
 ```
@@ -42,7 +42,7 @@ SFT 模型在 Spider dev 上达到 71.8% EX，但错误分析发现：
 
 基于上述分析，我们设计了 **local hard-negative 策略**：
 
-1. **chosen 固定为 gold SQL**：第一轮实验发现，如果把 SFT 执行正确的候选也作为 chosen，会导致 35% 的 pair `chosen != gold_sql`，模型在学习偏好「非 gold 的正确 SQL」而非 gold SQL。最终 DPO 训练几乎没有提升（71.95% vs SFT 71.76%）。
+1. **chosen 以 gold SQL 为主，门控 sampled-correct 为辅**：每个问题优先构造 `gold > rejected` 的 pair；如果模型采样出的 SQL 执行结果正确、非空、与 gold 在结构和 token 上足够接近，也可作为 `sampled_correct > rejected` 的补充 pair。未经门控的 sampled-correct 风险较高，可能只是当前数据库状态下偶然正确。
 
 2. **rejected 按错误类型分级**：对每个错误候选，通过局部特征对比自动分类（`classify_local_error`），优先选择与 gold SQL 结构相近但执行结果不同的 hard negatives。
 
@@ -301,12 +301,12 @@ TABLE_SELECTION 改善最明显，说明 DPO 有效减少了模型选错表的�
 
 ### 数据质量优先
 
-首轮 DPO（gold-only 策略）训练后 Spider EX 仅 71.95%，几乎没有提升。排查发现：
+首轮 DPO 训练后 Spider EX 仅 71.95%，几乎没有提升。排查发现：
 
-- **35% 的 pair 中 `chosen != gold_sql`**：直接原因是 prepare_dpo.py 将 SFT 执行正确的候选也作为 chosen，而这些候选虽然执行结果正确但 SQL 写法与 gold 不同。模型在偏好「写法不同但正确」的 SQL，而非 gold SQL。
+- **未经门控的 sampled-correct chosen 风险较高**：执行正确但非 gold 的 SQL 可能只是当前数据库状态下偶然正确。如果不做相似度、结构和结果质量门控，模型会学习到不稳定偏好。
 - **103 对 chosen/rejected 完全一致**：去重逻辑不足，模型从中学不到任何偏好信号。
 
-**教训**：DPO 数据构造后必须验证 `chosen == gold_sql` 的比例。
+**教训**：DPO 数据构造后必须验证 chosen 来源分布、chosen/rejected divergence、SQL 文本噪声，以及 sampled-correct chosen 是否通过质量门控。`chosen != gold_sql` 并非一定不可用，但必须谨慎过滤。
 
 ### 训练指标不反映数据质量
 
