@@ -3,11 +3,11 @@
 
 Usage:
     python scripts/prepare_dpo.py --model_path /root/autodl-tmp/models/sft/merged \\
-        --spider_dir dataset --output data_processed/dpo_pairs.json
+        --spider_dir dataset/spider --output data_processed/dpo_pairs_local.json
 
     # 利用已有的 SC 候选（跳过模型加载，只做执行对比）
     python scripts/prepare_dpo.py --candidates_file outputs/spider/sft/sc_n8/candidates.json \\
-        --spider_dir dataset --output data_processed/dpo_pairs.json
+        --spider_dir dataset/spider --output data_processed/dpo_pairs_local.json
 
     # 快速测试
     python scripts/prepare_dpo.py --model_path <path> --max_samples 100
@@ -18,15 +18,17 @@ Usage:
   --n_candidates    候选数（默认 8）
   --temperature     采样温度（默认 1.2）
   --max_samples     限制处理条数（调试用）
-  --no_others       只使用 train_spider.json，排除 train_others.json
+  --include_others  额外使用 train_others.json（默认只使用 SFT 训练过的 train_spider.json）
 """
 
 import argparse
 import json
 import os
+import random
 import re
 import sqlite3
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, List, Tuple
 
@@ -36,6 +38,7 @@ os.environ["OMP_NUM_THREADS"] = "4"
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from alignsql.data.preprocessing import classify_difficulty
 from alignsql.utils.io import save_json
 
 # ── 常量（与 evaluate_vllm.py 保持一致）───────────────────────────
@@ -66,6 +69,7 @@ Below is an instruction that describes a task, Write a response that appropriate
 
 SQL_KEYWORDS = ("SELECT", "WITH", "INSERT", "UPDATE", "DELETE")
 TASK_INSTRUCTION = "Convert the following question to a SQL query based on the database schema."
+NOISE_MARKERS = ("###REQUEST", "### REQUEST", "###INSTRUCTION", "### INSTRUCTION", "```")
 
 # ── 辅助函数（与 evaluate_vllm.py 保持一致）──────────────────────
 
@@ -229,6 +233,35 @@ def extract_sql(text: str) -> str:
     return ""
 
 
+def sql_text_quality(sql: str) -> tuple[bool, str]:
+    """Reject sampled strings that look like web-corpus or prompt-injection noise."""
+    text = (sql or "").strip()
+    if not text:
+        return False, "empty"
+    upper = text.upper()
+    if not any(upper.startswith(keyword) for keyword in SQL_KEYWORDS):
+        return False, "not_sql_start"
+    if any(marker in upper for marker in NOISE_MARKERS):
+        return False, "noise_marker"
+
+    non_ascii = sum(1 for ch in text if ord(ch) > 127)
+    if non_ascii > 0 and non_ascii / max(len(text), 1) > 0.03:
+        return False, "non_ascii_ratio"
+
+    suspicious = sum(
+        1 for ch in text
+        if ord(ch) > 127 and not ch.isspace()
+    )
+    if suspicious >= 4:
+        return False, "non_ascii_count"
+
+    control = sum(1 for ch in text if ord(ch) < 32 and ch not in "\t\n\r")
+    if control:
+        return False, "control_char"
+
+    return True, "ok"
+
+
 def execute_sql(db_path: str, sql: str) -> Tuple[bool, Any]:
     try:
         if not db_path or not Path(db_path).exists():
@@ -298,7 +331,7 @@ def load_model(model_path: str):
 
 
 def load_train_data(
-    spider_dir: Path, split: str = "train", include_others: bool = True
+    spider_dir: Path, split: str = "train", include_others: bool = False
 ) -> list[dict]:
     """加载 Spider 训练或开发数据。
 
@@ -376,6 +409,269 @@ def generate_mutation_negatives(gold_sql: str) -> list[str]:
     return list(dict.fromkeys(mutations))
 
 
+LOCAL_ERROR_PRIORITY = {
+    "TABLE_SELECTION": 0,
+    "GROUP_BY": 1,
+    "WHERE": 2,
+    "DISTINCT": 3,
+    "AGGREGATION": 4,
+    "SET_OP": 5,
+    "SUBQUERY": 6,
+    "ORDER_BY_LIMIT": 7,
+    "SYNTAX_ERROR": 8,
+    "SCHEMA_ERROR": 9,
+    "SELECT_COLUMNS": 10,
+    "VALUE_OR_COLUMN": 11,
+    "EXECUTION_ERROR": 12,
+    "EMPTY": 99,
+    "SURFACE_ONLY": 100,
+}
+
+DEFAULT_ERROR_MIX = {
+    "TABLE_SELECTION": 0.30,
+    "SYNTAX_ERROR": 0.15,
+    "GROUP_BY": 0.15,
+    "WHERE": 0.15,
+    "DISTINCT": 0.075,
+    "AGGREGATION": 0.075,
+    "SET_OP": 0.025,
+    "SUBQUERY": 0.025,
+    "ORDER_BY_LIMIT": 0.05,
+}
+
+
+def normalize_sql_text(sql: str) -> str:
+    return " ".join((sql or "").lower().strip().rstrip(";").split())
+
+
+def token_similarity(a: str, b: str) -> float:
+    a_tokens = set(re.findall(r"[a-zA-Z_][a-zA-Z0-9_]*|\d+", a.lower()))
+    b_tokens = set(re.findall(r"[a-zA-Z_][a-zA-Z0-9_]*|\d+", b.lower()))
+    if not a_tokens or not b_tokens:
+        return 0.0
+    return len(a_tokens & b_tokens) / len(a_tokens | b_tokens)
+
+
+def sql_feature_flags(sql: str) -> dict[str, Any]:
+    text = sql or ""
+    lower = text.lower()
+    agg_funcs = set(re.findall(r"\b(count|sum|avg|min|max)\s*\(", lower))
+    return {
+        "tables": extract_table_names(text),
+        "where": bool(re.search(r"\bwhere\b", lower)),
+        "group_by": bool(re.search(r"\bgroup\s+by\b", lower)),
+        "having": bool(re.search(r"\bhaving\b", lower)),
+        "order_by": bool(re.search(r"\border\s+by\b", lower)),
+        "limit": bool(re.search(r"\blimit\b", lower)),
+        "distinct": bool(re.search(r"\bdistinct\b", lower)),
+        "set_op": bool(re.search(r"\b(union|intersect|except)\b", lower)),
+        "subquery_count": max(0, len(re.findall(r"\bselect\b", lower)) - 1),
+        "agg_funcs": agg_funcs,
+        "select_count": estimate_select_count(text),
+        "where_clause": extract_clause(lower, "where"),
+        "group_clause": extract_clause(lower, "group by"),
+    }
+
+
+def extract_table_names(sql: str) -> set[str]:
+    """Best-effort table extraction for local hard-negative bucketing."""
+    tables = set()
+    text = re.sub(r"\([^()]*\)", " ", sql or "")
+    for match in re.finditer(r"\b(?:from|join)\s+([a-zA-Z_][a-zA-Z0-9_]*)", text, re.IGNORECASE):
+        tables.add(match.group(1).lower())
+
+    from_match = re.search(
+        r"\bfrom\b\s+(.+?)(?=\bwhere\b|\bgroup\s+by\b|\bhaving\b|\border\s+by\b|\blimit\b|\bunion\b|\bintersect\b|\bexcept\b|$)",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if from_match:
+        for part in from_match.group(1).split(","):
+            token = part.strip().split()
+            if token and token[0].lower() not in {"select", "join"}:
+                tables.add(token[0].strip('"`[]').lower())
+    return tables
+
+
+def estimate_select_count(sql: str) -> int:
+    match = re.search(r"\bselect\b\s+(.+?)\s+\bfrom\b", sql or "", re.IGNORECASE | re.DOTALL)
+    if not match:
+        return 0
+    expr = match.group(1)
+    depth = 0
+    count = 1 if expr.strip() else 0
+    for ch in expr:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            count += 1
+    return count
+
+
+def extract_clause(sql_lower: str, clause: str) -> str:
+    clause_pattern = re.escape(clause).replace(r"\ ", r"\s+")
+    start = re.search(rf"\b{clause_pattern}\b", sql_lower)
+    if not start:
+        return ""
+    rest = sql_lower[start.end():]
+    end = re.search(
+        r"\b(group\s+by|having|order\s+by|limit|union|intersect|except)\b",
+        rest,
+        re.IGNORECASE,
+    )
+    return " ".join((rest[:end.start()] if end else rest).split())
+
+
+def classify_local_error(gold_sql: str, candidate_sql: str, exec_success: bool, exec_result: Any) -> tuple[str, list[str]]:
+    """Classify a rejected candidate using only train-side SQL and execution feedback."""
+    if not candidate_sql or not candidate_sql.strip():
+        return "EMPTY", ["empty candidate"]
+
+    if normalize_sql_text(gold_sql) == normalize_sql_text(candidate_sql):
+        return "SURFACE_ONLY", ["candidate text normalizes to gold"]
+
+    if not exec_success:
+        msg = str(exec_result).lower()
+        if "no such table" in msg or "no such column" in msg:
+            return "SCHEMA_ERROR", [str(exec_result)]
+        if "syntax" in msg or "near" in msg or "incomplete input" in msg:
+            return "SYNTAX_ERROR", [str(exec_result)]
+        return "EXECUTION_ERROR", [str(exec_result)]
+
+    gold = sql_feature_flags(gold_sql)
+    cand = sql_feature_flags(candidate_sql)
+    details = []
+
+    if gold["tables"] != cand["tables"]:
+        details.append(f"tables gold={sorted(gold['tables'])}, rejected={sorted(cand['tables'])}")
+        return "TABLE_SELECTION", details
+    if gold["group_by"] != cand["group_by"] or gold["group_clause"] != cand["group_clause"]:
+        details.append("GROUP BY differs")
+        return "GROUP_BY", details
+    if gold["where"] != cand["where"] or gold["where_clause"] != cand["where_clause"]:
+        details.append("WHERE differs")
+        return "WHERE", details
+    if gold["distinct"] != cand["distinct"]:
+        details.append("DISTINCT differs")
+        return "DISTINCT", details
+    if gold["agg_funcs"] != cand["agg_funcs"]:
+        details.append(f"aggregations gold={sorted(gold['agg_funcs'])}, rejected={sorted(cand['agg_funcs'])}")
+        return "AGGREGATION", details
+    if gold["set_op"] != cand["set_op"]:
+        details.append("set operation differs")
+        return "SET_OP", details
+    if gold["subquery_count"] != cand["subquery_count"]:
+        details.append(f"subqueries gold={gold['subquery_count']}, rejected={cand['subquery_count']}")
+        return "SUBQUERY", details
+    if gold["order_by"] != cand["order_by"] or gold["limit"] != cand["limit"]:
+        details.append("ORDER BY/LIMIT differs")
+        return "ORDER_BY_LIMIT", details
+    if gold["select_count"] != cand["select_count"]:
+        details.append(f"select columns gold={gold['select_count']}, rejected={cand['select_count']}")
+        return "SELECT_COLUMNS", details
+    return "VALUE_OR_COLUMN", ["same coarse structure, wrong execution result"]
+
+
+def is_high_quality_correct_candidate(gold_sql: str, candidate_sql: str, result: Any) -> tuple[bool, str]:
+    """Gate execution-correct sampled SQL before allowing it as a DPO chosen."""
+    if not candidate_sql or not candidate_sql.strip():
+        return False, "empty"
+    if normalize_sql_text(gold_sql) == normalize_sql_text(candidate_sql):
+        return False, "same_as_gold"
+    if isinstance(result, list) and len(result) == 0:
+        return False, "empty_result"
+
+    similarity = token_similarity(gold_sql, candidate_sql)
+    if similarity < 0.45:
+        return False, "low_similarity"
+
+    gold = sql_feature_flags(gold_sql)
+    cand = sql_feature_flags(candidate_sql)
+    # Correct candidates should preserve the broad query intent. This still
+    # allows equivalent rewrites such as different join order or aliases.
+    for key in ("set_op", "distinct"):
+        if gold[key] != cand[key]:
+            return False, f"{key}_differs"
+    if abs(gold["subquery_count"] - cand["subquery_count"]) > 1:
+        return False, "subquery_count_differs"
+    if abs(gold["select_count"] - cand["select_count"]) > 1:
+        return False, "select_count_differs"
+    return True, "ok"
+
+
+def parse_error_mix(value: str) -> dict[str, float]:
+    if not value.strip():
+        return DEFAULT_ERROR_MIX.copy()
+    mix = {}
+    for part in value.split(","):
+        if not part.strip():
+            continue
+        name, weight = part.split(":", 1)
+        mix[name.strip()] = float(weight)
+    total = sum(mix.values())
+    if total <= 0:
+        raise ValueError("error mix weights must sum to > 0")
+    return {k: v / total for k, v in mix.items()}
+
+
+def balance_pairs_by_error_type(
+    pairs: list[dict],
+    error_mix: dict[str, float],
+    target_pairs: int,
+    seed: int,
+) -> list[dict]:
+    """Down/up-select pairs to keep the final DPO data focused on useful local errors."""
+    if not pairs or target_pairs == 0:
+        return pairs
+
+    target_pairs = min(target_pairs, len(pairs)) if target_pairs > 0 else len(pairs)
+    rng = random.Random(seed)
+    groups = defaultdict(list)
+    for pair in pairs:
+        groups[pair.get("error_type", "UNKNOWN")].append(pair)
+
+    for group in groups.values():
+        group.sort(
+            key=lambda x: (
+                LOCAL_ERROR_PRIORITY.get(x.get("error_type", "UNKNOWN"), 50),
+                -x.get("similarity", 0.0),
+                x.get("db_id", ""),
+                x.get("question", ""),
+            )
+        )
+
+    selected = []
+    selected_ids = set()
+    normalized_mix = parse_error_mix("") if not error_mix else error_mix
+    for error_type, weight in normalized_mix.items():
+        quota = int(round(target_pairs * weight))
+        for pair in groups.get(error_type, [])[:quota]:
+            selected.append(pair)
+            selected_ids.add(id(pair))
+
+    remaining = [
+        pair for pair in pairs
+        if id(pair) not in selected_ids
+        and pair.get("error_type") not in {"EMPTY", "SURFACE_ONLY"}
+    ]
+    remaining.sort(
+        key=lambda x: (
+            LOCAL_ERROR_PRIORITY.get(x.get("error_type", "UNKNOWN"), 50),
+            -x.get("similarity", 0.0),
+        )
+    )
+    for pair in remaining:
+        if len(selected) >= target_pairs:
+            break
+        selected.append(pair)
+        selected_ids.add(id(pair))
+
+    rng.shuffle(selected)
+    return selected
+
+
 def create_pair(
     item,
     schema_str,
@@ -385,16 +681,19 @@ def create_pair(
     stats,
     max_pairs=4,
     mutation_negatives=0,
+    pair_strategy="local",
 ):
     """对一条问题构造 1～max_pairs 条 preference pairs。
 
-    策略:
-      1. gold SQL 始终作为 chosen 之一（保证每道题至少一条正样本）
-      2. chosen 集合为 gold SQL + 执行正确的候选
-      3. 优先用 gold SQL 配不同 wrong candidate（最高质量），再轮转 correct candidate
+    local 策略:
+      1. chosen 固定为 gold SQL，避免把 execution-equivalent 但非 gold 的候选学成偏好。
+      2. rejected 必须是训练集采样得到的真实错误候选，或训练集 gold 变异负样本。
+      3. 对 rejected 打本地错误类型标签，并优先选择局部 hard negatives。
     """
     chosen = []
+    correct_items = []
     rejected = []
+    rejected_items = []
     empty_count = 0
     exec_error_count = 0
     wrong_result_count = 0
@@ -407,11 +706,34 @@ def create_pair(
         if not sql or not sql.strip():
             empty_count += 1
             continue
+        quality_ok, quality_reason = sql_text_quality(sql)
+        if not quality_ok:
+            stats["candidate_text_filtered"] += 1
+            stats["candidate_text_filter_reasons"][quality_reason] += 1
+            continue
         success, result = execute_sql(db_path, sql)
         if success and compare_results(result, gold_result, order_sensitive):
             chosen.append(sql)
+            ok, reason = is_high_quality_correct_candidate(gold_sql, sql, result)
+            if ok:
+                correct_items.append({
+                    "sql": sql,
+                    "similarity": token_similarity(gold_sql, sql),
+                    "source": "sampled_correct",
+                })
+            else:
+                stats["correct_candidate_reject_reasons"][reason] += 1
         else:
             rejected.append(sql)
+            error_type, details = classify_local_error(gold_sql, sql, success, result)
+            rejected_items.append({
+                "sql": sql,
+                "error_type": error_type,
+                "error_details": details,
+                "exec_success": success,
+                "similarity": token_similarity(gold_sql, sql),
+                "source": "sampled",
+            })
             if success:
                 wrong_result_count += 1
             else:
@@ -429,15 +751,25 @@ def create_pair(
         for sql in generate_mutation_negatives(gold_sql):
             if synthetic_rejected >= mutation_negatives or sql in existing:
                 continue
+            quality_ok, quality_reason = sql_text_quality(sql)
+            if not quality_ok:
+                stats["candidate_text_filtered"] += 1
+                stats["candidate_text_filter_reasons"][quality_reason] += 1
+                continue
             success, result = execute_sql(db_path, sql)
             if not success or not compare_results(result, gold_result, order_sensitive):
                 rejected.append(sql)
+                error_type, details = classify_local_error(gold_sql, sql, success, result)
+                rejected_items.append({
+                    "sql": sql,
+                    "error_type": error_type,
+                    "error_details": details,
+                    "exec_success": success,
+                    "similarity": token_similarity(gold_sql, sql),
+                    "source": "mutation",
+                })
                 synthetic_rejected += 1
                 existing.add(sql)
-
-    # chosen = gold SQL + correct candidates（去重）
-    chosen_set = [gold_sql] + [s for s in chosen if s != gold_sql]
-    chosen_set = list(dict.fromkeys(chosen_set))
 
     rejected = list(dict.fromkeys(rejected))
     stats["unique_rejected"] += len(rejected)
@@ -447,23 +779,58 @@ def create_pair(
         stats["drop_no_rejected"] += 1
         return []
     stats["questions_with_rejected"] += 1
-    # gold_sql always in chosen_set, so drop_all_rejected is impossible now
-    # (unless gold itself fails, but that's filtered earlier)
+    rejected_items = list({item["sql"]: item for item in rejected_items}.values())
+    if pair_strategy == "local":
+        rejected_items = [
+            item for item in rejected_items
+            if item["error_type"] not in {"EMPTY", "SURFACE_ONLY"}
+        ]
+        if not rejected_items:
+            stats["drop_no_local_rejected"] += 1
+            return []
+        rejected_items.sort(
+            key=lambda x: (
+                LOCAL_ERROR_PRIORITY.get(x["error_type"], 50),
+                -x["similarity"],
+                x["sql"],
+            )
+        )
+    else:
+        rejected_items = [
+            {
+                "sql": sql,
+                "error_type": "LEGACY",
+                "error_details": [],
+                "exec_success": None,
+                "similarity": token_similarity(gold_sql, sql),
+                "source": "legacy",
+            }
+            for sql in rejected
+        ]
 
-    # 构造多 pair，优先 gold SQL × rejected
-    pairs = []
-    for c in chosen_set:
-        for r in rejected:
-            if len(pairs) >= max_pairs:
-                break
-            pairs.append({"chosen": c, "rejected": r})
-        if len(pairs) >= max_pairs:
-            break
+    pairs = [
+        {"chosen": gold_sql, "chosen_source": "gold", "rejected": rejected_items[0]["sql"], **rejected_items[0]}
+    ]
+    correct_items = list({item["sql"]: item for item in correct_items}.values())
+    correct_items.sort(key=lambda x: (-x["similarity"], x["sql"]))
+    if max_pairs > 1 and correct_items and len(rejected_items) > 0:
+        # Pair the best execution-correct sampled SQL with the strongest
+        # rejected candidate not already used when possible.
+        rejected_for_correct = rejected_items[1] if len(rejected_items) > 1 else rejected_items[0]
+        pairs.append({
+            "chosen": correct_items[0]["sql"],
+            "chosen_source": "sampled_correct",
+            "rejected": rejected_for_correct["sql"],
+            **rejected_for_correct,
+        })
 
     stats["pairs_created"] += len(pairs)
     stats["questions_with_pairs"] += 1
-    if len(chosen_set) * len(rejected) > max_pairs:
+    if len(rejected_items) > max_pairs:
         stats["questions_capped_by_max_pairs"] += 1
+    for pair in pairs:
+        stats["error_type_counts"][pair["error_type"]] += 1
+        stats["chosen_source_counts"][pair["chosen_source"]] += 1
 
     base_msg = [
         {"role": "system", "content": SYSTEM_PROMPTS["sft"]},
@@ -473,10 +840,17 @@ def create_pair(
         {
             "messages": base_msg,
             "chosen": p["chosen"],
+            "chosen_source": p["chosen_source"],
             "rejected": p["rejected"],
             "db_id": item["db_id"],
             "question": item["question"],
             "gold_sql": gold_sql,
+            "difficulty": item.get("difficulty") or classify_difficulty(gold_sql),
+            "error_type": p["error_type"],
+            "error_details": p["error_details"],
+            "candidate_exec_success": p["exec_success"],
+            "similarity": round(p["similarity"], 4),
+            "negative_source": p["source"],
         }
         for p in pairs
     ]
@@ -484,7 +858,7 @@ def create_pair(
 
 def prepare_dpo(
     model_path: str = "",
-    spider_dir: str = "dataset",
+    spider_dir: str = "dataset/spider",
     output_path: str = "data_processed/dpo_pairs.json",
     split: str = "train",
     n_candidates: int = 5,
@@ -493,13 +867,17 @@ def prepare_dpo(
     max_new_tokens: int = 512,
     max_samples: int = -1,
     batch_size: int = 100,
-    include_others: bool = True,
+    include_others: bool = False,
     candidates_file: str | None = None,
     max_pairs_per_question: int = 4,
     candidate_rounds: int = 1,
     seed: int = 42,
     extra_temperatures: list[float] | None = None,
     mutation_negatives: int = 0,
+    pair_strategy: str = "local",
+    balance_error_types: bool = True,
+    error_mix: dict[str, float] | None = None,
+    target_pairs: int = 0,
 ) -> list[dict]:
     """DPO 偏好数据准备主流程。"""
     spider_path = Path(spider_dir)
@@ -530,6 +908,12 @@ def prepare_dpo(
         "questions_capped_by_max_pairs": 0,
         "questions_processed": 0,
         "synthetic_rejected": 0,
+        "drop_no_local_rejected": 0,
+        "error_type_counts": Counter(),
+        "chosen_source_counts": Counter(),
+        "correct_candidate_reject_reasons": Counter(),
+        "candidate_text_filtered": 0,
+        "candidate_text_filter_reasons": Counter(),
     }
 
     # Step 1: 加载数据集
@@ -622,7 +1006,8 @@ def prepare_dpo(
         f"  n_candidates={n_candidates}, temperature={temperature}, top_p={top_p}, "
         f"rounds={candidate_rounds}, extra_temperatures={extra_temperatures or []}, "
         f"max_pairs_per_question={max_pairs_per_question}, "
-        f"mutation_negatives={mutation_negatives}"
+        f"mutation_negatives={mutation_negatives}, "
+        f"pair_strategy={pair_strategy}, balance_error_types={balance_error_types}"
     )
     all_pairs = []
 
@@ -669,6 +1054,7 @@ def prepare_dpo(
                 stats=stats,
                 max_pairs=max_pairs_per_question,
                 mutation_negatives=mutation_negatives,
+                pair_strategy=pair_strategy,
             )
             all_pairs.extend(pairs)
 
@@ -682,11 +1068,28 @@ def prepare_dpo(
                   f"{stats['drop_no_rejected']} skipped no rejected; "
                   f"avg unique candidates/question={avg_unique:.2f}")
 
-    # Step 7: 保存输出
+    # Step 7: local hard-negative balance
+    if pair_strategy == "local" and balance_error_types:
+        before_balance = len(all_pairs)
+        all_pairs = balance_pairs_by_error_type(
+            all_pairs,
+            error_mix or DEFAULT_ERROR_MIX,
+            target_pairs=target_pairs or before_balance,
+            seed=seed,
+        )
+        print(f"\nBalanced local pairs: {before_balance} -> {len(all_pairs)}")
+        print("  Final error type distribution:")
+        for error_type, count in Counter(p["error_type"] for p in all_pairs).most_common():
+            print(f"    {error_type:<20} {count:>6}")
+        print("  Final chosen source distribution:")
+        for source, count in Counter(p.get("chosen_source", "unknown") for p in all_pairs).most_common():
+            print(f"    {source:<20} {count:>6}")
+
+    # Step 8: 保存输出
     print(f"\nSaving {len(all_pairs)} pairs to {output_path}...")
     save_json(all_pairs, output_path)
 
-    # Step 8: 打印统计
+    # Step 9: 打印统计
     print("\n" + "=" * 60)
     print("DPO Data Preparation Summary")
     print("=" * 60)
@@ -702,6 +1105,8 @@ def prepare_dpo(
     print(f"  Questions with valid gold SQL:     {len(gold_valid)}")
     print(f"    Preference pairs generated:       {stats['pairs_created']}")
     print(f"    Skipped (all candidates correct): {stats['drop_no_rejected']}")
+    if pair_strategy == "local":
+        print(f"    Skipped (no local hard negative): {stats['drop_no_local_rejected']}")
     print(f"    Questions with rejected:          {stats['questions_with_rejected']}")
     print(f"    Questions capped by max pairs:    {stats['questions_capped_by_max_pairs']}")
     print(f"    Synthetic rejected added:         {stats['synthetic_rejected']}")
@@ -721,6 +1126,22 @@ def prepare_dpo(
               f"{stats['unique_candidates']/stats['questions_processed']:.2f}")
         print(f"    Avg unique rejected/question:     "
               f"{stats['unique_rejected']/stats['questions_processed']:.2f}")
+    if stats["candidate_text_filtered"]:
+        print(f"\n  Candidate text filtered:            {stats['candidate_text_filtered']}")
+        for reason, count in stats["candidate_text_filter_reasons"].most_common():
+            print(f"    {reason:<20} {count:>6}")
+    if stats["error_type_counts"]:
+        print("\n  Local rejected error types before balance:")
+        for error_type, count in stats["error_type_counts"].most_common():
+            print(f"    {error_type:<20} {count:>6}")
+    if stats["chosen_source_counts"]:
+        print("\n  Chosen sources before balance:")
+        for source, count in stats["chosen_source_counts"].most_common():
+            print(f"    {source:<20} {count:>6}")
+    if stats["correct_candidate_reject_reasons"]:
+        print("\n  Execution-correct candidates not used as chosen:")
+        for reason, count in stats["correct_candidate_reject_reasons"].most_common():
+            print(f"    {reason:<20} {count:>6}")
     print(f"\n  Output: {output_path}")
     print()
 
@@ -736,7 +1157,7 @@ def parse_args():
     )
     parser.add_argument("--model_path", type=str, default="",
                         help="Path to model (vLLM)")
-    parser.add_argument("--spider_dir", type=str, default="dataset",
+    parser.add_argument("--spider_dir", type=str, default="dataset/spider",
                         help="Path to Spider dataset directory")
     parser.add_argument("--output", type=str, default="data_processed/dpo_pairs.json",
                         help="Output path for DPO pairs")
@@ -759,16 +1180,26 @@ def parse_args():
                         help="Base sampling seed")
     parser.add_argument("--extra_temperatures", type=str, default="",
                         help="Comma-separated extra temperatures, e.g. 0.8,1.6")
-    parser.add_argument("--max_pairs_per_question", type=int, default=4,
+    parser.add_argument("--max_pairs_per_question", type=int, default=2,
                         help="Max preference pairs to keep per question")
     parser.add_argument("--mutation_negatives", type=int, default=0,
                         help="Verified gold-SQL mutations to add as rejected candidates per question")
     parser.add_argument("--max_new_tokens", type=int, default=512,
                         help="Max new tokens per candidate")
-    parser.add_argument("--no_others", action="store_true",
-                        help="Exclude train_others.json")
+    parser.add_argument("--include_others", action="store_true",
+                        help="Include train_others.json in addition to train_spider.json")
+    parser.add_argument("--no_others", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--candidates_file", type=str, default=None,
                         help="Pre-generated candidates.json (skips model loading)")
+    parser.add_argument("--pair_strategy", type=str, default="local",
+                        choices=["local", "legacy"],
+                        help="Pair construction strategy: local hard negatives or legacy gold-vs-any-rejected")
+    parser.add_argument("--no_balance_error_types", action="store_true",
+                        help="Disable final error-type balancing for local strategy")
+    parser.add_argument("--error_mix", type=str, default="",
+                        help="Comma-separated target mix, e.g. TABLE_SELECTION:0.3,SYNTAX_ERROR:0.15")
+    parser.add_argument("--target_pairs", type=int, default=0,
+                        help="Target number of pairs after balancing (0 = keep as many as possible)")
     return parser.parse_args()
 
 
@@ -795,13 +1226,17 @@ def main():
         max_new_tokens=args.max_new_tokens,
         max_samples=args.max_samples,
         batch_size=args.batch_size,
-        include_others=not args.no_others,
+        include_others=args.include_others and not args.no_others,
         candidates_file=args.candidates_file,
         max_pairs_per_question=args.max_pairs_per_question,
         candidate_rounds=args.candidate_rounds,
         seed=args.seed,
         extra_temperatures=parse_extra_temperatures(args.extra_temperatures),
         mutation_negatives=args.mutation_negatives,
+        pair_strategy=args.pair_strategy,
+        balance_error_types=not args.no_balance_error_types,
+        error_mix=parse_error_mix(args.error_mix),
+        target_pairs=args.target_pairs,
     )
 
 
