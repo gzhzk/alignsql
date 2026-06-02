@@ -233,7 +233,7 @@ models/sft/qwen3-8b-spider/
 
 ## 下一步
 
-- [DPO 偏好对齐](./dpo.md) - 预期进一步提升到 ~82%
+- [DPO 偏好对齐](./dpo.md) - 通过偏好学习进一步提升到 74.0%
 - [评测文档](./evaluation.md) - 完整评测方法
 
 ## 参考

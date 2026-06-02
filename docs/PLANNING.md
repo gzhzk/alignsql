@@ -1,266 +1,189 @@
-# AlignSQL 重构计划
+# AlignSQL 项目规划
 
-> 当前状态评估 → 目标架构 → 分阶段实施路线
+> 当前状态 → 已完成工作 → 后续计划
 
 ---
 
-## 一、当前状态评估
+## 一、当前状态
 
-| 维度 | 现状 | 问题 |
+| 维度 | 状态 | 备注 |
 |------|------|------|
-| 数据集 | 仅 Spider（7K 样本，小规模学术场景） | 说服力弱，BIRD 更接近真实场景 |
-| 训练流程 | SFT 完成（72.24%），DPO 未跑 | 核心差异化部分缺失 |
-| 推理策略 | 贪心解码（temperature=0），单次生成 | 无自纠错、无候选投票 |
-| 代码结构 | 平铺脚本，无包结构 | 不可 import，无测试，工程感弱 |
-| 实验管理 | 有 wandb 配置，无 ablation 对比 | 无超参消融、无错误分析 |
-| 文档 | 详细但偏"方案设想"，缺少实际经验总结 | 项目报告像实验计划书而非实验报告 |
+| Spider SFT | ✅ 完成 | EX 71.8%, EM 67.0% |
+| Spider SC | ✅ 完成 | SC-12: EX 74.2%, EM 69.0% |
+| Spider DPO | ✅ 完成 | Greedy EX 74.0%, SC-12: EX 75.0% |
+| Error Analysis | ✅ 完成 | 错误类型分类、Oracle 分析 |
+| **BIRD 泛化** | **❌ 失败** | **直接使用 Spider 模型跑 BIRD 泛化极差** |
+| Learned Selector | 🔄 探索中 | Candidate Oracle 80.6%, 有空间但未完整验证 |
+
+### 各阶段实验结果
+
+| 阶段 | Spider Dev (EX) | Exact Match |
+|------|:---------------:|:-----------:|
+| Zero-shot (baseline) | 43.9% | 35.7% |
+| SFT (Greedy) | 71.8% | 67.0% |
+| SFT + SC-12 | 74.2% | 69.0% |
+| DPO (Greedy) | 74.0% | 68.1% |
+| DPO + SC-12 | **75.0%** | 68.9% |
 
 ---
 
-## 二、目标架构
+## 二、关键发现
 
-```
-┌──────────────────────────────────────────────────┐
-│                   数据集层                         │
-│  Spider (playground, 快速迭代)                     │
-│  BIRD (泛化验证, 真实场景)                         │
-│  Schema Filtering (BIRD schema 过长时启用)         │
-└───────────────┬──────────────────────────────────┘
-                │
-┌───────────────▼──────────────────────────────────┐
-│                  训练层                            │
-│  Phase 1: SFT (LoRA)                              │
-│  Phase 2: DPO (执行反馈自动构建偏好)               │
-│  Phase 3: GRPO (以 EX 为 reward 强化学习)         │
-│  [可选] Iterative DPO (多轮迭代)                   │
-└───────────────┬──────────────────────────────────┘
-                │
-┌───────────────▼──────────────────────────────────┐
-│                  推理层                            │
-│  Self-Consistency (采样 N 个 → 执行 → 投票)       │
-│  Execution-guided Regeneration (报错重生成)        │
-└───────────────┬──────────────────────────────────┘
-                │
-┌───────────────▼──────────────────────────────────┐
-│                  评估层                            │
-│  EX / EM 分难度评估                               │
-│  Error Analysis (错误类型分类 + 可视化)            │
-│  Ablation 实验对比                                │
-└──────────────────────────────────────────────────┘
-```
+### BIRD 泛化失败
+
+尝试直接用 Spider SFT 模型跑 BIRD dev，结果远低于预期。分析原因：
+
+| 问题 | 说明 |
+|------|------|
+| **Schema 差异大** | BIRD 的 database/schema 规模远超 Spider，最大单表数十列，prompt 截断严重 |
+| **领域偏移** | 金融、医疗等专业领域，Spider 的学术场景数据无法覆盖 |
+| **SQL 复杂度** | BIRD 的查询更长、嵌套更深，Spider 训练数据中罕见此类模式 |
+| **评估标准不同** | BIRD 使用 VES（Value Exactness），与 Spider 的 EX/EM 不同 |
+
+**教训**：NL2SQL 的泛化极度依赖训练数据的覆盖。Spider 上训练的能力不能直接迁移到 BIRD。正确的做法是：**在 BIRD 上走完全同样的 SFT → DPO 流程**，Spider pipeline 验证的是链路设计合理性，而不是训练出一个通用模型。
+
+### DPO 数据质量教训
+
+首轮 DPO 训练几乎无提升（71.95% vs 71.76%），事后排查发现：
+- 35% 的 preference pair 中 `chosen != gold_sql`
+- 103 对 chosen/rejected 完全一致
+
+**教训**：训练指标不反映数据质量，数据必须直接 inspect。
+
+### Candidate Oracle 分析
+
+为分析提升空间，计算了多 policy 候选池的 oracle（每道题都能从候选池中选到正确 SQL 的理论上界）：
+
+| 候选池 / Selector | Spider Dev (EX) | 说明 |
+|-------------------|:---------------:|------|
+| DPO + SC-12 | 75.0% | 当前实际选择结果 |
+| SFT + DPO Candidate Oracle | **80.6%** | 多 policy 候选池分析上界 |
+
+Oracle 结果说明正确 SQL 已经出现在候选池中，瓶颈正从「候选生成」转向「候选选择」。这是后续最有希望的方向。
 
 ---
 
-## 三、项目结构（当前状态）
+## 三、当前流程
 
 ```
-AlignSQL/
+Spider 训练数据 (train_spider.json)
+    ↓
+SFT 训练 (LoRA)
+    ↓
+模型采样候选 SQL (多温度, T=0.8~1.6)
+    ↓
+执行对比 + 错误分类 → 构造 DPO pairs
+    ↓
+DPO 训练
+    ↓
+评测 (Greedy + SC-N)
+    ↓
+错误分析 + Oracle 分析
+```
+
+### 完成的工作
+
+**SFT 链路**：
+- [x] 数据预处理（Spider → Alpaca 格式）
+- [x] Schema 序列化与 prompt 构建
+- [x] LoRA 微调训练配置
+- [x] 模型合并与推理评测
+
+**Self-Consistency**：
+- [x] 批量采样 N 个候选 + 执行投票
+- [x] greedy / SC-N 评测脚本
+- [x] N=5/8/12 消融实验
+
+**DPO 链路**：
+- [x] 候选采样（多温度、多轮次）
+- [x] SQL 质量过滤（防噪声污染）
+- [x] 执行对比 + 错误分类（13 类本地错误）
+- [x] local hard-negative 策略（chosen = gold SQL）
+- [x] 变异负样本（规则生成）
+- [x] 错误类型平衡
+- [x] LLaMA-Factory DPO 训练配置
+- [x] 整个 pipeline 跑通并记录结果
+
+**实验记录**：
+- [x] 实验结果表格（README）
+- [x] SFT / DPO 训练文档
+- [x] Candidate Oracle 分析
+
+---
+
+## 四、后续计划
+
+### Phase 1：候选选择（最优先）
+
+Candidate Oracle 80.6% vs 当前 75.0%，有 ~5.6% 的 gap 来自选择环节。
+
+可选方向：
+- **规则 selector**：基于执行结果的启发式选择（已初步实验，75.8%）
+- **轻量 learned selector**：用小模型对候选 SQL 打分（对训练数据要求高）
+- **Execution-aware reranker**：边执行边剪枝
+
+### Phase 2：SFT/DPO 融合
+
+DPO 在 extra 难度提升 +5.4%，但在 easy 略有下降。探索融合策略：
+- 多 checkpoint 集成
+- SFT + DPO 联合解码
+
+### Phase 3：新数据集完整复现
+
+将 Spider pipeline 迁移到新数据集（如 BIRD）时，需**从头训练完整流程**：
+
+```
+BIRD 数据
+  → BIRD SFT （不是用 Spider 模型直接跑）
+  → BIRD SC 消融
+  → BIRD DPO
+  → 评估
+```
+
+预期在迁移过程中会发现 pipeline 的不足，反过来改进设计。
+
+---
+
+## 五、项目结构
+
+```
+alignsql/
 ├── alignsql/                      # Python 包 (pip install -e .)
-│   ├── __init__.py
-│   ├── data/
-│   │   ├── __init__.py
+│   ├── data/                      # 数据加载/处理
 │   │   ├── preprocessing.py       # 难度分类、Prompt 构建
 │   │   ├── schema.py              # Schema 序列化
 │   │   └── spider.py              # Spider 数据加载器
 │   ├── models/
-│   │   ├── __init__.py
 │   │   └── inference.py           # Self-Consistency 采样 & 投票
 │   ├── eval/
-│   │   ├── __init__.py
-│   │   └── metrics.py             # 结果比较、分数统计
-│   ├── analysis/
-│   │   └── __init__.py            # 错误分析 (待实现)
+│   │   └── metrics.py
 │   └── utils/
-│       ├── __init__.py
 │       ├── db.py                  # SQLite 执行工具
 │       └── io.py                  # JSON/JSONL 读写
 ├── vendor/                        # 第三方代码 (Spider 官方评测)
-│   ├── evaluation.py
-│   └── process_sql.py
-├── configs/                       # LLaMA-Factory 训练配置
-│   ├── dataset_info.json
+├── configs/
 │   └── spider/
 │       ├── sft.yaml
 │       └── merge_sft.yaml
-├── scripts/                       # 可执行入口 (薄层调用)
-│   ├── evaluate_vllm.py           # 推理评测 (greedy / SC 两模式)
-│   ├── prepare_sft.py             # SFT 数据预处理
-│   ├── analyze_difficulty.py      # 难度分析
+├── scripts/
+│   ├── evaluate_vllm.py           # 推理评测 (greedy / SC)
+│   ├── prepare_sft.py             # SFT 数据准备
+│   ├── prepare_dpo.py             # DPO 数据准备
+│   ├── analyze_difficulty.py
 │   ├── run_zeroshot.sh
-│   ├── run_sft.sh
-│   └── run_sc.sh                  # Self-Consistency 消融
-├── tests/
-│   ├── test_data.py
-│   ├── test_schema.py
-│   └── test_utils.py
-├── outputs/                       # 实验结果
-│   ├── zeroshot/results.json
-│   └── sft/results.json
-├── assets/                        # 实验图表
+│   └── run_eval.sh                # 评测入口
 ├── docs/
-│   └── PLANNING.md               # 本文件
-├── data_processed/                # 预处理产物 (sft_data.json)
-├── dataset/                       # 原始数据 (Spider JSON + SQLite)
-├── setup.py
-├── Makefile
-├── .gitignore
-└── README.md
-```
-
-### 项目结构（后续按需添加）
-
-```
-configs/
-├── bird/                   # BIRD 训练配置
-│
-alignsql/
-├── data/
-│   └── bird.py             # BIRD 数据加载器
-└── models/
-    └── dpo_trainer.py      # DPO 训练逻辑
+├── outputs/                       # 实验结果
+├── dataset/                       # 原始数据
+└── data_processed/                # 预处理产物
 ```
 
 ---
 
-## 四、分阶段实施路线
+## 六、后续预期
 
-### Phase 0：代码重构（1 天）✅
-
-目标：从"脚本集合"变为"可安装包"
-
-- [x] 创建 `alignsql/` 包结构（data / models / eval / analysis / utils）
-- [x] 抽取公共逻辑（db 工具、schema 序列化、数据加载）
-- [x] 迁移第三方代码到 `vendor/`（evaluation.py + process_sql.py）
-- [x] 编写 `setup.py` + `Makefile`
-- [x] 迁移现有实验数据到 `outputs/` 目录
-- [x] 将 Self-Consistency 逻辑封装到 `alignsql/models/inference.py`
-- [x] 集成 SC 到 `evaluate_vllm.py`（`--self_consistency` 开关）
-- [x] 补基础测试（data / schema / utils）
-- [x] 配置迁移：`config/` → `configs/spider/`
-
-### Phase 1：Self-Consistency 推理（1 天）✅
-
-目标：不改模型，最快提点
-
-- [x] 实现 `alignsql/models/inference.py` — 批量采样 N 个候选 + 执行投票
-- [x] 集成到 `evaluate_vllm.py`（`--self_consistency` 开关 + `--n_candidates`）
-- [x] 提供 `scripts/run_sc.sh` 消融脚本（greedy + N=3/5/8）
-- [ ] 对比不同 N（3/5/8/16）的效果（需 GPU 运行）
-- [ ] 在 Spider Dev 上跑通并记录结果
-- [ ] 移植到 BIRD 验证
-
-预计提升：+3~8% EX（Spider 上）
-
-### Phase 2：DPO 完整跑通（2-3 天）
-
-目标：SFT → DPO 完整链路
-
-- [ ] 实现 `generate_candidates.py` — 候选 SQL 生成（beam + sampling）
-- [ ] 实现 `build_preferences.py` — 执行反馈构建偏好对
-- [ ] 写 `configs/spider/dpo.yaml`
-- [ ] 训练 + 评估
-- [ ] 迭代 DPO 第二轮
-
-### Phase 3：BIRD 接入（2-3 天）
-
-目标：在更难的数据集上验证泛化能力
-
-- [ ] 下载 BIRD 数据集
-- [ ] 实现 `alignsql/data/bird.py` — BIRD 数据加载与预处理
-- [ ] 实现 Schema Filtering（BIRD schema 长，需选择相关表）
-- [ ] 在 BIRD 上跑 SFT + Self-Consistency
-- [ ] 对比 Spider vs BIRD 的效果差异
-
-### Phase 4：GRPO 强化学习（3-5 天，探索性）
-
-目标：以 SQL 执行结果为 reward，用 RL 进一步对齐
-
-- [ ] 调研 LLaMA-Factory 的 GRPO 支持（需 dpo 最新版）
-- [ ] 设计 reward 函数（EX score + 执行效率 + 语法合法性）
-- [ ] 编写 `configs/spider/grpo.yaml`
-- [ ] 训练 + 评估
-- [ ] 对比 SFT vs DPO vs GRPO
-
-注意：此阶段效果不确定，GRPO 在数学推理上效果好但在 SQL 上缺乏验证。
-
-### Phase 5：错误分析 + 消融实验（1-2 天）
-
-目标：不仅报告结果，更分析原因
-
-- [ ] 实现 `eval/error_analysis.py` — 按错误类型分类
-- [ ] 分析 SFT 模型的典型错误模式
-- [ ] 做 ablation：
-  - LoRA rank 消融（rank=4/8/16/32）
-  - Learning rate 消融（1e-4/2e-4/5e-4）
-  - Schema 模板消融（不同 prompt 风格）
-- [ ] 输出实验报告
-
----
-
-## 五、关键设计决策
-
-### Schema Filtering（BIRD）
-
-BIRD 数据库大（最大单库 36GB），schema 可能包含数百列。直接全量塞入 prompt 会超长。
-
-方案：基于 question 和 schema 元素的语义相似度做筛选。
-- 对 question 做简单 tokenize，提取关键词
-- 对每个表和列计算与 question 的 token 重叠
-- 选择 Top-K 表（K 根据 context window 动态调整）
-- 保留外键信息以支持跨表查询
-
-### Self-Consistency 投票机制
-
-```
-对每个 question:
-  1. 采样 N 个候选 SQL (temperature=0.8, top_p=0.9)
-  2. 对每个候选执行并获取结果集
-  3. 按结果集去重，选择出现次数最多的结果集对应的 SQL
-  4. 平局时优先选执行时间短的
-
-与 beam search 的区别：beam search 生成 top-K 概率路径，多样性不足。
-采样能产生更多样化的候选，更适合投票。
-```
-
-### 实验命名规范
-
-```
-{stage}_{dataset}_{关键参数}_run{序号}
-
-sft_spider_lr2e4_rank8_run001
-sft_spider_lr2e4_rank16_run001
-dpo_spider_beta0.3_run001
-selfcons_spider_n8_run001
-grpo_spider_lr1e5_run001
-```
-
----
-
-## 六、硬件与资源
-
-| 组件 | 规格 | 预计开销 |
-|------|------|----------|
-| GPU | RTX 4090 (24GB) × 1 | 已有 |
-| Spider SFT | ~2 小时 | 已有数据 |
-| Spider DPO | ~1 小时 | 需运行 |
-| BIRD SFT | ~4-6 小时 | 需运行 |
-| BIRD DPO | ~2-3 小时 | 需运行 |
-| Self-Consistency | 推理耗时 x N | 需运行 |
-| 磁盘 | BIRD 约 33GB，Spider 约 2GB | 需下载 |
-
-BIRD 数据较大，建议评估时对 BIRD 使用 subset（选择 5-10 个有代表性的数据库）来加速迭代。
-
----
-
-## 七、预期成果
-
-| 阶段 | Spider EX | BIRD EX | 说明 |
-|------|-----------|---------|------|
-| Zero-shot baseline | 43.91% | ~25-30% | 原始模型 |
-| SFT | 72.24% | ~45-55% | LoRA 微调 |
-| SFT + Self-Consistency | ~75-78% | ~50-58% | 推理时投票 |
-| DPO | ~75-80% | ~50-60% | 偏好对齐 |
-| DPO + Self-Consistency | ~78-82% | ~55-62% | 叠加效果 |
-| GRPO | 待定 | 待定 | 探索性 |
-
-BIRD 上的绝对数值低于 Spider 是正常的（BIRD 更难），有价值的是**相对于 baseline 的提升百分比**。
+| 方向 | 预期收益 | 不确定性 |
+|------|---------|---------|
+| Candidate Selection | +3~5% EX | Learned selector 需要训练数据 |
+| SFT/DPO 融合 | +1~2% EX | 收益可能不大 |
+| 新数据集全流程 | 验证 pipeline 可迁移性 | 取决于数据集规模和难度 |
