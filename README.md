@@ -49,7 +49,7 @@ DPO 带来 **+2.2% EX**（greedy），收益集中在 medium/extra 上（extra +
 | 候选池 / Selector | Spider Dev (EX) | 说明 |
 |-------------------|:---------------:|------|
 | DPO + SC-12 | 75.0% | 当前实际结果 |
-| SFT + DPO Candidate Oracle | **80.95%** | 多 policy 候选池上界 |
+| SFT + DPO Candidate Oracle | **81.43%** | 多 policy 候选池上界 |
 
 正确答案已经在候选池中了。瓶颈从**候选生成**转向了**候选选择**。
 
@@ -62,7 +62,7 @@ SC (74.3%) ── 暴露不稳定：模型知道但选不对
    ↓
 DPO (75.0%) ── 偏好修正稳步提点，但收益递减
    ↓
-Oracle (80.95%) ── 瓶颈在"选择"不在"生成"
+Oracle (81.43%) ── 瓶颈在"选择"不在"生成"
    ↓
 RL ── 待探索
 ```
@@ -166,7 +166,7 @@ python scripts/oracle_analysis.py \
     --reference_results outputs/spider/dpo/sc_n12/results.json
 ```
 
-Oracle 80.95% 说明模型能生成正确答案，但当前 majority vote 选不出。转向 execution-aware verifier 或 learned reranker 是比较明确的后续方向。
+Oracle 81.43% 说明模型能生成正确答案，但当前 majority vote 选不出。转向 execution-aware verifier 或 learned reranker 是比较明确的后续方向。
 
 ### Post-training 思考
 
@@ -206,6 +206,7 @@ Oracle 80.95% 说明模型能生成正确答案，但当前 majority vote 选不
 ## 详细方案
 
 - [项目规划](docs/PLANNING.md)
+- [Oracle 归因分析](docs/oracle-attribution.md)
 - [SFT 训练流程](docs/sft.md)
 - [DPO 偏好对齐](docs/dpo.md)
 
