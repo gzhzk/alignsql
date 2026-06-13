@@ -33,7 +33,9 @@ DIFFICULTIES = ("easy", "medium", "hard", "extra")
 
 
 def normalize_sql(sql: str) -> str:
-    return " ".join((sql or "").strip().rstrip(";").lower().split())
+    # Preserve literal case: SQLite string comparisons are case-sensitive, so
+    # lowercasing the whole SQL can merge semantically different candidates.
+    return " ".join((sql or "").strip().rstrip(";").split())
 
 
 def has_order_by(sql: str) -> bool:
@@ -102,7 +104,7 @@ def main() -> None:
     parser.add_argument("--candidate_file", type=Path, action="append", required=True)
     parser.add_argument("--reference_results", type=Path, default=Path("outputs/spider/dpo/sc_n12/results.json"),
                         help="Optional results.json used only for hardness labels.")
-    parser.add_argument("--max_ops", type=int, default=200_000,
+    parser.add_argument("--max_ops", type=int, default=1_000_000,
                         help="SQLite progress handler step limit for candidate SQL.")
     parser.add_argument("--gold_max_ops", type=int, default=1_000_000)
     parser.add_argument("--output", type=Path, default=None)
@@ -121,10 +123,10 @@ def main() -> None:
     failures = Counter()
     per_item = []
 
-    exec_cache: dict[tuple[str, str], tuple[bool, Any]] = {}
+    exec_cache: dict[tuple[str, str, int], tuple[bool, Any]] = {}
 
     def cached_execute(db_id: str, sql: str, max_ops: int) -> tuple[bool, Any]:
-        key = (db_id, normalize_sql(sql))
+        key = (db_id, normalize_sql(sql), max_ops)
         if key not in exec_cache:
             exec_cache[key] = execute_sql(db_path(args.spider_dir, db_id), sql, max_ops)
         return exec_cache[key]

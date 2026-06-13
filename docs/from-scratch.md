@@ -151,6 +151,8 @@ modelscope download Qwen/Qwen3-8B --local_dir /root/autodl-tmp/models/qwen3-8b
 
 ModelScope 只提供了模型，数据集仍需从 HuggingFace 获取。
 
+当前环境搭建只使用 Spider 数据集。BIRD 等其他 NL2SQL 数据集暂不纳入 from-scratch 流程；如果后续迁移新数据集，应在目标数据集上重新走完整 SFT → SC → DPO → 评估链路。
+
 在 AutoDL 上创建脚本下载：
 
 ```bash
@@ -184,46 +186,6 @@ rm /root/autodl-tmp/download_spider.py
 ├── models/qwen3-8b/     ← 模型 (16GB)
 └── data/spider/         ← 数据集
 ```
-
----
-
-## 七-B、BIRD 数据集下载
-
-BIRD 是更贴近真实场景的 NL2SQL 基准（更大的数据库、更复杂的查询、含 evidence 提示）。
-
-目前使用 BIRD minidev（500 条验证集）做快速验证，完整 BIRD dev/train 约 12GB。
-
-```bash
-# minidev（轻量验证用）
-cd /root/alignsql/dataset/bird
-
-# 从官网下载 minidev
-wget https://bird-bench.oss-cn-beijing.aliyuncs.com/minidev.zip
-unzip minidev.zip && rm minidev.zip
-
-# 解压后结构：
-# bird/minidev/MINIDEV/
-# ├── mini_dev_sqlite.json    ← 问题集（含 evidence）
-# ├── dev_tables.json         ← 表结构
-# └── dev_databases/          ← SQLite 数据库（11 个 DB）
-```
-
-如果使用完整 BIRD：
-
-```bash
-# BIRD dev/train（较大，约 12GB）
-wget https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip
-wget https://bird-bench.oss-cn-beijing.aliyuncs.com/train.zip
-wget https://bird-bench.oss-cn-beijing.aliyuncs.com/dev_tables.zip
-wget https://bird-bench.oss-cn-beijing.aliyuncs.com/train_tables.zip
-wget https://bird-bench.oss-cn-beijing.aliyuncs.com/dev_databases.zip
-
-unzip dev.zip && unzip train.zip && unzip dev_tables.zip
-unzip train_tables.zip && unzip dev_databases.zip
-rm *.zip
-```
-
-注意：BIRD 目前仅支持执行精度评测（EX），不支持精确匹配（EM），因为 BIRD 的 SQL 解析与 Spider 不完全兼容。
 
 ---
 

@@ -1,0 +1,76 @@
+{
+  "total_recoverable_dpo_wrong_oracle_correct": 71,
+  "mode_counts": {
+    "correct_minority": 50,
+    "merged_vote_would_fix": 16,
+    "correct_tied_largest_but_lost_tiebreak": 5
+  },
+  "bucket_counts": {
+    "D_both_wrong_oracle_correct": 37,
+    "B_sft_correct_dpo_wrong": 34
+  },
+  "by_hardness": {
+    "medium": 35,
+    "extra": 17,
+    "hard": 10,
+    "easy": 9
+  },
+  "diff_tag_counts": {
+    "SELECT": 30,
+    "JOIN_CONDITION": 24,
+    "GROUP_BY": 23,
+    "WHERE_CONDITION": 20,
+    "TABLE_SELECTION": 19,
+    "COLUMN_ORDER": 10,
+    "LITERAL_VALUE": 10,
+    "AGGREGATION": 7,
+    "ORDER_BY": 7,
+    "VALUE_ONLY_DIFF": 7,
+    "DISTINCT": 4,
+    "FILTER_VALUE": 4,
+    "SET_OP": 4,
+    "SUBQUERY": 4,
+    "HAVING": 3,
+    "LITERAL_CASE": 3,
+    "SORT_DIRECTION": 2
+  },
+  "semantic_tag_counts": {
+    "PROJECTION": 40,
+    "FILTER_OR_VALUE_GROUNDING": 29,
+    "JOIN_KEY_OR_PATH": 24,
+    "GROUPING": 23,
+    "TABLE_SELECTION": 19,
+    "AGGREGATION": 7,
+    "SORT_OR_EXTREME_VALUE": 7,
+    "NESTED_QUERY": 4,
+    "SET_OPERATION": 4,
+    "SORT_DIRECTION": 2
+  },
+  "correct_source_counts": {
+    "sft": 54,
+    "dpo": 28
+  },
+  "wrong_source_counts": {
+    "dpo": 71,
+    "sft": 42
+  },
+  "correct_rank_counts": {
+    "1": 23,
+    "2": 13,
+    "0": 12,
+    "3": 9,
+    "6": 5,
+    "8": 4,
+    "4": 2,
+    "5": 2,
+    "9": 1
+  },
+  "wrong_rank_counts": {
+    "0": 56,
+    "1": 10,
+    "2": 2,
+    "3": 1,
+    "4": 1,
+    "8": 1
+  }
+}
