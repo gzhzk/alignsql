@@ -87,6 +87,7 @@ python scripts/prepare_dpo.py \
     --model_path /root/autodl-tmp/models/sft/merged \
     --spider_dir dataset/spider \
     --output data_processed/dpo_pairs.json
+python scripts/convert_dpo_to_llamafactory.py --input data_processed/dpo_pairs.json --output data_processed/dpo_data.jsonl
 
 # DPO 训练
 llamafactory-cli train configs/spider/dpo.yaml
